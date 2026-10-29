@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="recipe-loader-token" content="__TOKEN__">
+<title>recipe-loader</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="masthead">
+  <div class="masthead-inner">
+    <div class="masthead-brand">
+      <h1 class="wordmark">recipe-loader</h1>
+      <p class="wordmark-sub" id="stateHome" title="state home"></p>
+    </div>
+    <nav class="tabs" id="tabs" role="tablist">
+      <button class="tab is-active" data-tab="targets" role="tab" aria-selected="true">Targets</button>
+      <button class="tab" data-tab="recipes" role="tab" aria-selected="false">Recipes</button>
+      <button class="tab" data-tab="settings" role="tab" aria-selected="false">Sources</button>
+    </nav>
+    <div class="masthead-side">
+      <button class="btn btn-ghost" id="refreshBtn" title="Reload overview and recipes">Refresh</button>
+    </div>
+  </div>
+</header>
+
+<main id="app">
+  <section id="tab-targets" class="tab-panel is-active">
+    <div id="targets" class="targets"></div>
+    <section class="uncovered-block">
+      <h2 class="section-title">Not covered <span class="count-badge" id="uncoveredCount"></span></h2>
+      <p class="section-note">Harnesses the loader deliberately does not write.</p>
+      <div id="uncovered"></div>
+    </section>
+  </section>
+
+  <section id="tab-recipes" class="tab-panel">
+    <div id="recipes" class="recipe-grid"></div>
+    <div id="recipeErrors"></div>
+  </section>
+
+  <section id="tab-settings" class="tab-panel">
+    <div class="settings-card">
+      <h2 class="section-title">Recipe sources</h2>
+      <p class="section-note">Directories scanned for recipes, in order. The first path is the gpt-with-taste root used to build artifacts.</p>
+      <div id="sourcesList"></div>
+      <div class="settings-actions">
+        <button class="btn" id="addSourceBtn">Add source</button>
+        <button class="btn btn-primary" id="saveSourcesBtn">Save sources</button>
+        <span class="settings-status" id="sourcesStatus" role="status"></span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="viewerMount"></div>
+<div id="dialogMount"></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

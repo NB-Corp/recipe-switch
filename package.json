@@ -1,0 +1,15 @@
+{
+  "name": "recipe-loader",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Install, switch and roll back behavior recipes across coding harnesses, with a local web UI.",
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "bin": { "recipe-loader": "./bin/recipe-loader.mjs" },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "ui": "node bin/recipe-loader.mjs ui",
+    "demo": "node scripts/demo.mjs --reset"
+  }
+}
