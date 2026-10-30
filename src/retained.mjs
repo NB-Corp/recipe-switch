@@ -1,7 +1,7 @@
 // Retain only the newest displaced inode per target; older bytes live in backups/blobs.
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {readFile, writeFile, sha256, assertBoundary, captureBoundary, toPosix} from './fsx.mjs';
+import {readFile, writeFile, sha256, assertBoundary, captureBoundary, toPosix, pathIdentity, sameIdentity, removeIdentified, replacedWarning} from './fsx.mjs';
 import {putBlob} from './originals.mjs';
 
 export const RETENTION_LIMIT = '被替换的版本会保留到这个工具的下一次操作；之后仍通过旧打开句柄写入的内容不保证保存。Replaced versions are retained until this tool’s next operation; later writes through an already-open old handle are not guaranteed to be saved.';
@@ -19,12 +19,13 @@ export function releaseCarrierReferences(state, paths) {
     }
 }
 
-export async function retireCarriers(store, paths, keepBackup) {
+export async function retireCarriers(store, paths, keepBackup, {onlyBackup} = {}) {
   const targets = targetPaths(paths);
   const root = path.join(store.home, 'backups'), boundary = await captureBoundary(store.home);
   const dirs = await fs.readdir(root, {withFileTypes: true}).catch(error => { if (error.code === 'ENOENT') return []; throw error; });
   for (const dir of dirs) {
-    if (!dir.isDirectory() || path.resolve(root, dir.name) === path.resolve(keepBackup)) continue;
+    if (!dir.isDirectory() || keepBackup && path.resolve(root, dir.name) === path.resolve(keepBackup)
+      || onlyBackup && path.resolve(root, dir.name) !== path.resolve(onlyBackup)) continue;
     const indexFile = path.join(root, dir.name, 'index.json');
     await assertBoundary(indexFile, boundary);
     const bytes = await readFile(indexFile);
@@ -35,8 +36,11 @@ export async function retireCarriers(store, paths, keepBackup) {
       for (const saved of [...entry.replacedVersions ?? []]) {
         // Archive paths stay inside state; EXDEV carriers stay beside their target.
         const carrierBoundary = saved.startsWith(toPosix(root) + '/') ? boundary : await captureBoundary(path.dirname(entry.path));
-        await assertBoundary(saved, carrierBoundary);
-        const current = await readFile(saved);
+        const expectedIdentity = entry.carrierIdentities?.[saved], actualIdentity = await pathIdentity(saved);
+        const replaced = await fs.lstat(saved).then(() => !sameIdentity(actualIdentity, expectedIdentity), error => { if (error.code === 'ENOENT') return false; throw error; });
+        if (replaced) store.warn(replacedWarning(saved));
+        else await assertBoundary(saved, carrierBoundary);
+        const current = replaced ? null : await readFile(saved);
         if (current !== null && sha256(current) !== (entry.carrierHashes?.[saved] ?? entry.sha256)) {
           const hash = await putBlob(store, current);
           // A retry after a crash must not register the same captured bytes twice.
@@ -47,9 +51,9 @@ export async function retireCarriers(store, paths, keepBackup) {
           await writeFile(indexFile, Buffer.from(JSON.stringify(index, null, 2) + '\n'), {durable: true});
         }
         // This single read is the retention cutoff. No promise for later old-handle writes.
-        if (current !== null) await fs.unlink(saved);
+        if (current !== null) await removeIdentified(saved, expectedIdentity, {warn: message => store.warn(message)});
         entry.replacedVersions = entry.replacedVersions.filter(file => file !== saved);
-        delete entry.carrierHashes?.[saved];
+        delete entry.carrierHashes?.[saved]; delete entry.carrierIdentities?.[saved];
         await writeFile(indexFile, Buffer.from(JSON.stringify(index, null, 2) + '\n'), {durable: true});
       }
     }

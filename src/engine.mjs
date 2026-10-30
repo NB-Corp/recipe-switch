@@ -4,7 +4,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import {readFile, writeFile, restoreDisplaced, rmdirIfEmpty, equalBytes, toPosix, sha256, assertBoundary, captureBoundary, withLock, exists, probeHardlinks} from './fsx.mjs';
+import {readFile, writeFile, restoreDisplaced, rmdirIfEmpty, equalBytes, toPosix, sha256, assertBoundary, captureBoundary, withLock, exists, probeHardlinks,
+  pathIdentity, sameIdentity, removeIdentified, replacedWarning, recoverProbes} from './fsx.mjs';
 import {inspect, inspectBytes, fingerprintOf, render, recordLayout, identity, ABSENT} from './units.mjs';
 import {unifiedDiff} from './diff.mjs';
 import {prepareOriginals, publishOriginals, readOriginals, originalBytes, collectOrphanBlobs, originalManifestPath, putBlob, RECONSTRUCTED_WARNING} from './originals.mjs';
@@ -33,16 +34,35 @@ function transactionPaths(file, id, i, backup) {
     phase: 'planned', recovery: {temp: prefix + '-undo.tmp', displaced: prefix + '-undo.displaced',
       archive: path.join(backup, `${i}-compensated-${path.basename(file)}`), phase: 'planned'}};
 }
-async function carrierOf(row, journal) {
+function validateArtifacts(journal) {
+  if (!/^[a-f0-9-]{36}$/.test(journal.id)) throw new Error('Invalid transaction journal id');
+  for (const [i, row] of journal.files.entries()) {
+    if (path.resolve(row.path) !== row.path) throw new Error('Non-canonical transaction target');
+    const expected = transactionPaths(row.path, journal.id, i, journal.backup);
+    const sequence = row.recovery.tempSequence ?? 0;
+    if (!Number.isSafeInteger(sequence) || sequence < 0) throw new Error('Invalid recovery temp sequence');
+    if (sequence) expected.recovery.temp = expected.recovery.temp.replace(/\.tmp$/, `-${sequence}.tmp`);
+    for (const [artifact, wanted] of [[row, expected], [row.recovery, expected.recovery]])
+      for (const key of ['temp', 'displaced', 'archive']) if (artifact[key] !== wanted[key] || path.resolve(artifact[key]) !== artifact[key])
+        throw new Error(`Unregistered transaction ${key}: ${toPosix(artifact[key])}`);
+  }
+}
+async function artifactMatches(store, file, identity) {
+  if (sameIdentity(await pathIdentity(file), identity)) return true;
+  store.warn(replacedWarning(file)); return false;
+}
+async function carrierOf(store, row, journal) {
   for (const file of [row.displaced, row.archive]) if (file && await exists(file)) {
     const boundary = file === row.archive ? journal.backupBoundary : row.boundary;
+    if (!await artifactMatches(store, file, row.displacedIdentity)) continue;
     await assertBoundary(file, boundary);
-    return {file, boundary, bytes: await readFile(file)};
+    return {file, boundary, bytes: await readFile(file), identity: row.displacedIdentity};
   }
   return null;
 }
 async function archiveDisplaced(store, journal, row, artifact = row) {
   if (artifact.external || !artifact.displaced || !await exists(artifact.displaced)) return;
+  if (!await artifactMatches(store, artifact.displaced, artifact.displacedIdentity)) { artifact.replaced = true; return; }
   await assertBoundary(artifact.displaced, row.boundary);
   await assertBoundary(artifact.archive, journal.backupBoundary);
   artifact.phase = 'archiving'; await store.journal(journal);
@@ -53,7 +73,7 @@ async function archiveDisplaced(store, journal, row, artifact = row) {
   catch (error) { if (error.code !== 'EXDEV') throw error; artifact.external = true; }
   artifact.phase = 'archived'; await store.journal(journal);
 }
-async function retainedIndex(journal) {
+async function retainedIndex(store, journal) {
   const file = path.join(journal.backup, 'index.json'), bytes = await readFile(file);
   const index = bytes === null ? journal.files.map(row => ({path: toPosix(row.path), copy: null})) : JSON.parse(bytes.toString('utf8'));
   for (const row of journal.files) {
@@ -61,8 +81,9 @@ async function retainedIndex(journal) {
     entry.replacedVersions = [];
     for (const artifact of [row, row.recovery]) {
       const saved = artifact.external ? artifact.displaced : artifact.archive;
-      if (saved && await exists(saved)) {
+      if (saved && await exists(saved) && !artifact.replaced && await artifactMatches(store, saved, artifact.displacedIdentity)) {
         entry.replacedVersions.push(toPosix(saved));
+        (entry.carrierIdentities ??= {})[toPosix(saved)] = artifact.displacedIdentity;
         (entry.carrierHashes ??= {})[toPosix(saved)] = sha256(dec(artifact === row ? row.before : row.after));
       }
     }
@@ -70,50 +91,66 @@ async function retainedIndex(journal) {
   await assertBoundary(file, journal.backupBoundary);
   await writeFile(file, Buffer.from(JSON.stringify(index, null, 2) + '\n'), {durable: true});
 }
-async function cleanTemp(row, artifact, expected, journal) {
-  if (!artifact.temp || !await exists(artifact.temp)) return;
-  const prefix = `${row.path}.recipe-switch-${journal.id}-`;
-  await assertBoundary(artifact.temp, row.boundary);
-  if (!artifact.temp.startsWith(prefix) || !artifact.temp.endsWith('.tmp'))
-    throw new Error(`Unregistered transaction temp: ${toPosix(artifact.temp)}`);
-  // R22: a registered random temp is ours, including an interrupted partial write.
-  await fs.unlink(artifact.temp);
+async function cleanTemp(store, row, artifact) {
+  if (!artifact.temp) return;
+  await removeIdentified(artifact.temp, artifact.tempIdentity, {boundary: row.boundary, warn: message => store.warn(message)});
+}
+function rollbackBlocked(row, current, expected, journal) {
+  const describe = bytes => bytes === null ? 'absent' : 'sha256:' + sha256(bytes);
+  return `这个文件的回滚没能完成，因为文件系统不再支持安全写入。当前内容是 ${describe(current)}，应为 ${describe(expected)}，备份在 ${journal.backup}。请先保留当前文件，再从备份恢复应有版本，或恢复硬链接能力后重试。 / Rollback could not complete because the filesystem no longer supports safe writes. Current content is ${describe(current)}; expected ${describe(expected)}; backup: ${journal.backup}. Preserve the current file, then restore the expected version from backup, or restore hard-link support and retry. File: ${toPosix(row.path)}`;
 }
 async function compensate(store, journal, row) {
   await assertBoundary(row.path, row.boundary);
-  if (['planned', 'untouched', 'restored'].includes(row.phase) || ['restored', 'archived'].includes(row.recovery.phase)) return;
-  const undo = row.recovery, carrier = await carrierOf(row, journal);
-  const before = 'before' in undo ? dec(undo.before) : carrier?.bytes ?? dec(row.before);
+  if (['planned', 'temp-created', 'untouched', 'restored'].includes(row.phase)) return;
+  const undo = row.recovery, carrier = await carrierOf(store, row, journal);
+  const before = dec(row.before);
   const current = await readFile(row.path), after = dec(row.after);
-  if (equalBytes(current, before)) return;
-  const movedDuringUndo = await exists(undo.displaced);
-  if (current === null && (carrier || movedDuringUndo)) {
-    undo.before = enc(before); undo.phase = 'publishing'; await store.journal(journal);
-    if (before !== null) {
-      let source = carrier?.file;
-      if (!source) {
-        if (!await exists(undo.temp)) throw new Error(`Recovery temp missing: ${toPosix(undo.temp)}`);
-        source = undo.temp;
-      }
-      await restoreDisplaced(row.path, source, row.boundary, {retain: true, sourceBoundary: carrier?.boundary ?? row.boundary});
-    }
+  const complete = async () => {
+    const actual = await readFile(row.path);
+    if (!equalBytes(actual, before)) throw new Error(rollbackBlocked(row, actual, before, journal));
     undo.phase = 'restored'; await store.journal(journal);
-    return;
+  };
+  if (equalBytes(current, before)) return complete();
+  const movedDuringUndo = await exists(undo.displaced);
+  undo.before = enc(before);
+  try {
+    const source = carrier && equalBytes(carrier.bytes, before) ? carrier.file : undo.temp;
+    const sourceIdentity = source === carrier?.file ? carrier.identity : undo.tempIdentity;
+    const reusable = current === null && before !== null && await exists(source)
+      && sameIdentity(await pathIdentity(source), sourceIdentity) && equalBytes(await readFile(source), before);
+    if (reusable) {
+      undo.phase = 'publishing'; await store.journal(journal);
+      await restoreDisplaced(row.path, source, row.boundary, {sourceBoundary: source === carrier?.file ? carrier.boundary : row.boundary, identity: sourceIdentity});
+    } else {
+      if (!equalBytes(current, after) && !(current === null && (carrier || movedDuringUndo)))
+        throw new Error(`Recovery needs a manual decision for ${toPosix(row.path)}; user edits kept. Backup: ${journal.backup}`);
+      await cleanTemp(store, row, undo);
+      if (await fs.lstat(undo.temp).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; })) {
+        // The previous name belongs to its replacement now; a computed new name lets recovery finish.
+        undo.tempSequence = (undo.tempSequence ?? 0) + 1;
+        undo.temp = transactionPaths(row.path, journal.id, journal.files.indexOf(row), journal.backup).recovery.temp.replace(/\.tmp$/, `-${undo.tempSequence}.tmp`);
+        delete undo.tempIdentity;
+      }
+      undo.phase = 'prepared'; await store.journal(journal);
+      await writeFile(row.path, before, {expected: current, boundary: row.boundary, temp: undo.temp, displaced: undo.displaced,
+        retainDisplaced: true, durable: true, warn: message => store.warn(message), onStage: async (phase, details) => {
+          Object.assign(undo, details, {phase: phase === 'restored' ? 'compensation-pending' : phase}); await store.journal(journal);
+        }});
+    }
+    await complete();
+  } catch (error) {
+    if (equalBytes(await readFile(row.path), before)) return complete();
+    undo.phase = 'compensation-pending'; await store.journal(journal);
+    throw new Error(`${rollbackBlocked(row, await readFile(row.path), before, journal)}\n${error.message}`);
   }
-  if (!equalBytes(current, after)) throw new Error(`Recovery needs a manual decision for ${toPosix(row.path)}; user edits kept. Backup: ${journal.backup}${carrier ? `; displaced version: ${toPosix(carrier.file)}` : ''}`);
-  // R21: persist compensation's own paths and payload before it moves the target.
-  await cleanTemp(row, undo, before, journal); // retry an interrupted preparation, using only its registered temp.
-  undo.before = enc(before); undo.phase = 'prepared'; await store.journal(journal);
-  await writeFile(row.path, before, {expected: after, boundary: row.boundary, temp: undo.temp, displaced: undo.displaced,
-    retainDisplaced: true, durable: true, onStage: async phase => { undo.phase = phase; await store.journal(journal); }});
-  undo.phase = 'restored'; await store.journal(journal);
 }
 
 export class Store {
   constructor(home = stateHome()) {
     this.home = path.resolve(home); this.file = path.join(this.home, 'state.json');
-    this.pending = path.join(this.home, 'pending.json');
+    this.pending = path.join(this.home, 'pending.json'); this.warnings = [];
   }
+  warn(message) { if (!this.warnings.includes(message)) { this.warnings.push(message); process.emitWarning(message); } }
   async readState() {
     const bytes = await readFile(this.file);
     if (bytes === null) return {schema: 1, targets: {}};
@@ -133,28 +170,39 @@ export class Store {
       await fs.mkdir(journal.backup, {recursive: true});
       journal.backupBoundary = await captureBoundary(journal.backup);
       for (const [i, row] of journal.files.entries()) {
-        const paths = transactionPaths(row.path, journal.id, i, journal.backup);
-        Object.assign(row, {...paths, displaced: row.displaced ?? paths.displaced, phase: 'unknown'});
+        const paths = transactionPaths(row.path, journal.id, i, journal.backup), legacy = row.displaced;
+        let displacedIdentity;
+        if (legacy && await exists(legacy)) {
+          if (legacy !== row.path + '.displaced') throw new Error('Unregistered legacy displaced path');
+          await assertBoundary(legacy, row.boundary); displacedIdentity = await pathIdentity(legacy);
+          // Old journals predate conditional publication; preserve their actual displaced before-side.
+          row.before = enc(await readFile(legacy));
+          await restoreDisplaced(paths.displaced, legacy, row.boundary, {identity: displacedIdentity});
+        }
+        Object.assign(row, paths, {displacedIdentity, phase: 'unknown'});
       }
       await this.journal(journal);
     }
+    validateArtifacts(journal);
     const committed = equalBytes(await readFile(this.file), dec(journal.stateAfter));
     if (!committed) for (const row of [...journal.files].reverse()) await compensate(this, journal, row);
     // Retain the current operation's displaced inodes, including compensation.
     for (const row of journal.files) {
       await archiveDisplaced(this, journal, row);
       if (row.recovery) await archiveDisplaced(this, journal, row, row.recovery);
-      await cleanTemp(row, row, dec(row.after), journal);
-      if (row.recovery) await cleanTemp(row, row.recovery, dec(row.recovery.before), journal);
+      await cleanTemp(this, row, row);
+      if (row.recovery) await cleanTemp(this, row, row.recovery);
     }
     if (committed) await publishOriginals(this, journal.originals);
-    await retainedIndex(journal);
+    await retainedIndex(this, journal);
     if (committed) await retireCarriers(this, journal.files.map(row => row.path), journal.backup);
+    else await retireCarriers(this, journal.files.map(row => row.path), null, {onlyBackup: journal.backup});
     for (const dir of committed ? journal.cleanupDirs ?? [] : [...journal.missingDirs].reverse()) await rmdirIfEmpty(dir);
     await collectOrphanBlobs(this);
     await writeFile(this.pending, null, {durable: true});
   }
   async transaction(fn) { return withLock(this.home, async () => {
+    await recoverProbes(this.home, message => this.warn(message));
     await this.recover();
     const state = await this.readState();
     for (const [key, ended] of Object.entries(state.endedOriginals ?? {})) if (!state.targets[key] && ended.harness) {
@@ -247,7 +295,7 @@ export async function plan({store, harness, home, recipe, desired, notes = [], f
     }
   }
   const files = await previewFiles(units, 'after');
-  const blocked = [...await publicationBlocks(units), ...(!force ? [...drift.map(d => `hand edit detected: ${d.path} (${d.unit})`), ...conflicts.map(c => `${c.reason}: ${c.path}`)] : [])];
+  const blocked = [...await publicationBlocks(store, units), ...(!force ? [...drift.map(d => `hand edit detected: ${d.path} (${d.unit})`), ...conflicts.map(c => `${c.reason}: ${c.path}`)] : [])];
   return {id: crypto.randomUUID(), key, harness, home: toPosix(path.resolve(home)), kind: kind ?? (target?.stack?.length ? 'switch' : 'install'),
     stateVersion: stackIds(target), recipe: recipe && {key: recipe.key, id: recipe.id, name: recipe.name, version: recipe.version, revision: recipe.revision,
       origin: recipe.origin, optionValues: recipe.optionValues ?? {}}, units, files, drift, conflicts, notes: [...notes, RETENTION_LIMIT, RESTORE_LIMIT], blocked, force};
@@ -259,13 +307,13 @@ export function describe(unit) {
   return `${unit.type === 'yamlArrayItem' ? 'YAML' : 'JSON'} ${unit.pointer.join('.')} ${unit.type === 'jsonArrayRecord' ? 'record' : 'item'} ${JSON.stringify(unit.value)}`;
 }
 
-async function publicationBlocks(units) {
+async function publicationBlocks(store, units) {
   const dirs = new Set(), blocked = [];
   for (const unit of units) {
     const dir = path.dirname(path.resolve(unit.path));
     if (dirs.has(dir)) continue;
     dirs.add(dir);
-    const reason = await probeHardlinks(unit.path, unit.boundary);
+    const reason = await probeHardlinks(unit.path, unit.boundary, store.home);
     if (reason) blocked.push(reason);
   }
   return blocked;
@@ -349,14 +397,14 @@ async function commitFiles(store, rows, state, backupDir, beforeSave, cleanupDir
     for (const row of files) {
       created.push(...await writeFile(row.path, dec(row.after), {expected: dec(row.before), boundary: row.boundary,
         temp: row.temp, displaced: row.displaced, retainDisplaced: true, durable: true,
-        onStage: async phase => { row.phase = phase; await store.journal(journal); }}));
+        warn: message => store.warn(message), onStage: async (phase, details) => { Object.assign(row, details, {phase}); await store.journal(journal); }}));
     }
     for (const row of files) await archiveDisplaced(store, journal, row);
     for (const version of replacedVersions) {
       const row = files.find(row => toPosix(row.path) === version.path);
       version.saved = toPosix(row.external ? row.displaced : row.archive);
     }
-    await retainedIndex(journal);
+    await retainedIndex(store, journal);
     if (beforeSave) beforeSave(created, replacedVersions);
     journal.stateAfter = enc(stateBytes(state)); await store.journal(journal);
     await store.save(state);
@@ -469,7 +517,7 @@ export async function planUndo(store, harness, home, {all = false, force = false
   return {key, harness, home: toPosix(path.resolve(home)), kind: all ? 'uninstall' : 'rollback', ops: ops.map(op => op.id),
     restores: all ? null : target.stack.at(-2)?.recipe ?? null, files: await previewFiles(units, 'before'), drift,
     notes: [RETENTION_LIMIT, RESTORE_LIMIT],
-    blocked: [...await publicationBlocks(units), ...(!force ? drift.map(d => `hand edit detected: ${d.path} (${d.unit})`) : [])], force};
+    blocked: [...await publicationBlocks(store, units), ...(!force ? drift.map(d => `hand edit detected: ${d.path} (${d.unit})`) : [])], force};
 }
 export async function applyUndo(store, planned) {
   if (planned.blocked.length) throw new Error(`Blocked:\n  ${planned.blocked.join('\n  ')}`);
@@ -536,7 +584,7 @@ export async function planRestoreOriginal(store, harness, home, {force = false} 
       reconstructed: original.files.some(file => file.reconstructed), capturedAt: original.capturedAt,
       notes: [...(original.files.some(file => file.reconstructed) ? [RECONSTRUCTED_WARNING] : []),
         'Restores complete pre-install backup files and removes every recipe-switch operation for this target. Unrelated changes in these files also require force and are backed up first.', RETENTION_LIMIT, RESTORE_LIMIT],
-      blocked: [...await publicationBlocks(units), ...(!force && original.files.some(file => file.reconstructed)
+      blocked: [...await publicationBlocks(store, units), ...(!force && original.files.some(file => file.reconstructed)
         ? [`${RECONSTRUCTED_WARNING}。请额外确认 --force / Confirm explicitly with --force.`] : []),
         ...(!force ? drift.map(row => `hand edit detected: ${row.path} (${row.unit})`) : [])]};
   });

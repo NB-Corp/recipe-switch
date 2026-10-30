@@ -65,33 +65,100 @@ const unsupportedLink = error => ['ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EPERM', 'E
 /** R23: only a hardlink publishes a complete file atomically without replacing. */
 export async function publishExclusive(source, file) { await fs.link(source, file); }
 
-/** Preview probes the actual destination directory and leaves no persistent files. */
-export async function probeHardlinks(file, boundary) {
-  if (boundary) await assertBoundary(file, boundary);
-  const dir = path.dirname(file), created = await mkdirp(dir), id = crypto.randomUUID();
-  const source = path.join(dir, `.recipe-switch-probe-${id}.tmp`), linked = source + '.link';
-  let ownSource = false, ownLink = false;
+export const inodeIdentity = stat => stat ? {dev: String(stat.dev), ino: String(stat.ino)} : null;
+export async function pathIdentity(file) {
+  const stat = await fs.lstat(file, {bigint: true}).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+  return stat?.isSymbolicLink() ? null : inodeIdentity(stat);
+}
+export const sameIdentity = (a, b) => Boolean(a && b && a.dev === b.dev && a.ino === b.ino);
+export const replacedWarning = file => `路径已被替换，未删除：${toPosix(file)} / Path replaced; not deleted: ${toPosix(file)}`;
+export async function removeIdentified(file, identity, {directory = false, boundary, warn = message => process.emitWarning(message)} = {}) {
+  const stat = await fs.lstat(file, {bigint: true}).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+  if (!stat) return;
+  if (stat.isSymbolicLink() || !sameIdentity(inodeIdentity(stat), identity)) { warn(replacedWarning(file)); return; }
+  if (boundary) try { await assertBoundary(file, boundary); } catch { warn(replacedWarning(file)); return; }
+  if (directory) await rmdirIfEmpty(file); else await fs.unlink(file);
+}
+const activeProbes = new Set();
+async function cleanProbe(record, warn) {
+  const source = path.join(path.dirname(record.target), `.recipe-switch-probe-${record.id}.tmp`);
+  for (const [file, identity, expected] of [[record.link, record.linkIdentity, source + '.link'], [record.probe, record.probeIdentity, source]]) {
+    if (file !== expected || path.resolve(file) !== file) { warn(replacedWarning(file)); continue; }
+    await removeIdentified(file, identity, {warn, boundary: record.boundary});
+  }
+  for (const item of [...record.createdDirs].reverse()) {
+    await removeIdentified(item.path, item.identity, {directory: true, warn, boundary: item.boundary ?? record.boundary});
+  }
+}
+export async function recoverProbes(stateDir, warn = message => process.emitWarning(message)) {
+  return withLock(stateDir, () => recoverProbeRecords(stateDir, warn), 'probe.lock');
+}
+async function recoverProbeRecords(stateDir, warn) {
+  const root = path.join(stateDir, 'probes'), boundary = await captureBoundary(stateDir);
+  await assertBoundary(root, boundary);
+  for (const name of await fs.readdir(root).catch(error => { if (error.code === 'ENOENT') return []; throw error; })) {
+    if (!/^[a-f0-9-]+\.json$/.test(name)) continue;
+    const file = path.join(root, name); await assertBoundary(file, boundary);
+    const record = JSON.parse(await readFile(file));
+    if (activeProbes.has(record.id)) continue;
+    if (record.pid !== process.pid) {
+      try { process.kill(record.pid, 0); continue; } catch (error) { if (error.code !== 'ESRCH') continue; }
+    }
+    if (name !== record.id + '.json') { warn(replacedWarning(file)); continue; }
+    await cleanProbe(record, warn); await writeFile(file, null, {durable: true});
+  }
+  await rmdirIfEmpty(root);
+}
+
+/** R25: publish a durable cleanup record before touching the target directory. */
+export async function probeHardlinks(file, boundary, stateDir) {
+  if (!stateDir) throw new Error('A state directory is required for a recoverable safety probe');
+  return withLock(stateDir, () => runHardlinkProbe(file, boundary, stateDir), 'probe.lock');
+}
+async function runHardlinkProbe(file, boundary, stateDir) {
+  boundary = await captureBoundary(boundary ?? path.dirname(file));
+  await assertBoundary(file, boundary);
+  const dir = path.dirname(file), id = crypto.randomUUID(), source = path.join(dir, `.recipe-switch-probe-${id}.tmp`);
+  const journal = path.join(stateDir, 'probes', id + '.json'), missing = [];
+  let cursor = dir;
+  while (!await exists(cursor)) { missing.unshift(cursor); cursor = path.dirname(cursor); }
+  const creationBoundary = await captureBoundary(cursor);
+  const record = {id, pid: process.pid, target: file, boundary, probe: source, link: source + '.link',
+    createdDirs: missing.map(path => ({path, boundary: creationBoundary, identity: null}))};
+  const save = () => writeFile(journal, Buffer.from(JSON.stringify(record)), {durable: true});
+  let linking = false;
+  activeProbes.add(id);
   try {
-    if (boundary) await assertBoundary(source, boundary);
-    await fs.writeFile(source, Buffer.alloc(0), {flag: 'wx'}); ownSource = true;
-    await fs.link(source, linked); ownLink = true;
+    await save();
+    for (const item of record.createdDirs) {
+      await assertBoundary(item.path, item.boundary);
+      try { await fs.mkdir(item.path); } catch (error) { if (error.code === 'EEXIST') continue; throw error; }
+      item.identity = inodeIdentity(await fs.stat(item.path, {bigint: true})); await save();
+    }
+    await assertBoundary(source, boundary);
+    const handle = await fs.open(source, 'wx', 0o600);
+    try {
+      record.probeIdentity = inodeIdentity(await handle.stat({bigint: true}));
+      record.linkIdentity = record.probeIdentity; await save(); await handle.sync();
+    } finally { await handle.close(); }
+    linking = true; await fs.link(source, record.link);
     return null;
   } catch (error) {
-    const reason = unsupportedLink(error)
+    const reason = linking && unsupportedLink(error)
       ? '该位置的文件系统不支持硬链接（常见于 FAT/exFAT/部分网络盘），recipe-switch 无法保证安全写入。This location’s filesystem does not support hard links (common on FAT/exFAT and some network drives); recipe-switch cannot guarantee safe writes.'
       : '无法完成硬链接安全探测；请检查目录访问权限。Could not complete the hard-link safety probe; check directory access permissions.';
     return `${reason} ${toPosix(dir)} (${error.code ?? error.message})`;
   } finally {
-    if (ownLink) await fs.unlink(linked);
-    if (ownSource) await fs.unlink(source);
-    for (const item of created.reverse()) await rmdirIfEmpty(item);
+    try { await cleanProbe(record, message => process.emitWarning(message)); await writeFile(journal, null, {durable: true}); await rmdirIfEmpty(path.dirname(journal)); }
+    finally { activeProbes.delete(id); }
   }
 }
 
 /** Restore without replacing a newer destination. Transactions retain the inode. */
-export async function restoreDisplaced(file, displaced, boundary, {sourceBoundary = boundary} = {}) {
+export async function restoreDisplaced(file, displaced, boundary, {sourceBoundary = boundary, identity} = {}) {
   if (boundary) await assertBoundary(file, boundary);
   if (sourceBoundary) await assertBoundary(displaced, sourceBoundary);
+  if (identity && !sameIdentity(await pathIdentity(displaced), identity)) throw new Error(replacedWarning(displaced));
   const collision = () => new Error(`Changed during operation; newer file kept at ${toPosix(file)}; displaced version kept at ${toPosix(displaced)}`);
   try { await publishExclusive(displaced, file); }
   catch (error) {
@@ -125,26 +192,45 @@ export async function writeFile(file, bytes, options = {}) {
   const created = bytes === null ? [] : await mkdirp(path.dirname(file));
   const temp = options.temp ?? `${file}.recipe-switch-${process.pid}-${crypto.randomUUID()}.tmp`;
   const displaced = options.displaced ?? `${file}.recipe-switch-${crypto.randomUUID()}.displaced`;
-  let ownTemp = false, moved = false, published = false;
+  let ownTemp = null, moved = false, published = false, displacedIdentity = null;
   try {
     if (boundary) await assertBoundary(temp, boundary);
     if (bytes !== null) {
-      await fs.writeFile(temp, bytes, {flag: 'wx', mode: options.mode ?? 0o600}); ownTemp = true;
-      if (options.durable) await syncFile(temp);
+      if (options.temp) {
+        const handle = await fs.open(temp, 'wx', options.mode ?? 0o600);
+        try {
+          ownTemp = inodeIdentity(await handle.stat({bigint: true}));
+          await onStage('temp-created', {tempIdentity: ownTemp});
+          await handle.writeFile(bytes);
+          if (options.durable) await handle.sync();
+        } finally { await handle.close(); }
+      } else {
+        await fs.writeFile(temp, bytes, {flag: 'wx', mode: options.mode ?? 0o600});
+        ownTemp = inodeIdentity(await fs.stat(temp, {bigint: true}));
+        if (options.durable) await syncFile(temp);
+      }
     }
     if (boundary) await assertBoundary(file, boundary);
     if ('expected' in options) {
       if (!equalBytes(await checkedBytes(file), options.expected))
         throw new Error(`Changed during operation; stopped before writing ${toPosix(file)}`);
       if (boundary) await assertBoundary(displaced, boundary);
-      await onStage('displacing'); // temp/displaced paths are durable before rename-away.
+      displacedIdentity = await pathIdentity(file);
+      await onStage('displacing', {displacedIdentity}); // identity is durable before rename-away.
       try { await fs.rename(file, displaced); moved = true; }
       catch (error) { if (error.code !== 'ENOENT') throw error; }
+      if (moved) {
+        displacedIdentity = await pathIdentity(displaced);
+        await onStage('displaced', {displacedIdentity});
+      }
       const actual = moved ? await checkedBytes(displaced) : null;
       if (!equalBytes(actual, options.expected))
         throw new Error(`Changed during operation; displaced version differs from preview: ${toPosix(file)}`);
       await onStage('publishing');
-      if (bytes !== null) await publishExclusive(temp, file);
+      if (bytes !== null) {
+        if (!sameIdentity(await pathIdentity(temp), ownTemp)) throw new Error(replacedWarning(temp));
+        await publishExclusive(temp, file);
+      }
       published = true;
       await onStage('published');
       // R01: retain the actual inode, including later writes through open handles.
@@ -156,22 +242,22 @@ export async function writeFile(file, bytes, options = {}) {
   } catch (error) {
     if (moved) {
       try {
-        await restoreDisplaced(file, displaced, boundary, {retain: retainDisplaced}); moved = false;
+        await restoreDisplaced(file, displaced, boundary, {identity: displacedIdentity}); moved = false;
         await onStage('restored');
       } catch (recovery) { throw new Error(`${error.message}\n${recovery.message}`); }
     } else if (!published) await onStage('untouched');
     for (const dir of [...created].reverse()) await rmdirIfEmpty(dir);
     throw error;
   } finally {
-    if (ownTemp) await fs.unlink(temp).catch(error => { if (error.code !== 'ENOENT') throw error; });
+    if (ownTemp) await removeIdentified(temp, ownTemp, {warn: options.warn});
   }
   return created;
 }
 
 /** R02: cross-process lock; a dead owner's lock is reclaimable, never a live one. */
-export async function withLock(home, fn) {
+export async function withLock(home, fn, name = 'transaction.lock') {
   await mkdirp(home);
-  const lock = path.join(home, 'transaction.lock'), token = crypto.randomUUID(), started = Date.now();
+  const lock = path.join(home, name), token = crypto.randomUUID(), started = Date.now();
   for (;;) {
     try {
       const handle = await fs.open(lock, 'wx');

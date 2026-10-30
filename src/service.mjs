@@ -95,7 +95,7 @@ export class Service {
       const resolved = item.home.replace(/^~/, process.env.USERPROFILE || process.env.HOME || '').split(' ')[0];
       uncovered.push({...item, detected: await exists(resolved)});
     }
-    return {stateHome: toPosix(this.store.home), targets: rows, uncovered};
+    return {stateHome: toPosix(this.store.home), targets: rows, uncovered, warnings: this.store.warnings};
   }
 
   async resolveTarget(harness, home) {
