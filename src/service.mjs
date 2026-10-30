@@ -128,11 +128,16 @@ export class Service {
       throw new Error(`${driver.name}: explicit main=off is unsupported by this entry point; choose a recipe with Main enabled.`);
     const {units, notes = [], launch} = await driver.desired(recipe, target, merged, {env: this.env});
     const planned = await plan({store: this.store, harness: driver.id, home: target, recipe, desired: units, notes, force});
-    const isForeign = item => item?.what?.id?.startsWith('foreign.') ?? (typeof item?.what === 'string' && item.what === 'Non-managed SYSTEM.md');
+    const foreignEntry = item => {
+      const isForeign = (item?.what?.id ?? '').startsWith('foreign.');
+      const text = isForeign ? item.what : note('foreign.generic', {what: String(item.what ?? '')});
+      const detail = isForeign && item.detail?.id ? item.detail : note('foreign.genericDetail', {detail: String(item.detail ?? '')});
+      return {kind: 'foreign', text, detail};
+    };
     const blocking = (found.foreign ?? []).filter(item => item.blocking && !managed.installed &&
-      !(driver.id === 'kimi-code' && recipe.texts.main === null && (item.what?.id === 'foreign.kimi.system' || item.what === 'Non-managed SYSTEM.md')));
-    if (blocking.length && !force) planned.blocked.push(...blocking.map(item => isForeign(item) ? {kind: 'foreign', text: item.what, detail: item.detail} : {kind: 'generic', text: `${item.what}: ${item.detail}`}));
-    planned.warnings = [...(found.foreign ?? []).filter(item => !item.blocking).map(item => isForeign(item) ? {kind: 'foreign', text: item.what, detail: item.detail} : {kind: 'generic', text: `${item.what}: ${item.detail}`}),
+      !(driver.id === 'kimi-code' && recipe.texts.main === null && item.what?.id === 'foreign.kimi.system'));
+    if (blocking.length && !force) planned.blocked.push(...blocking.map(foreignEntry));
+    planned.warnings = [...(found.foreign ?? []).filter(item => !item.blocking).map(foreignEntry),
       ...(recipe.unknownOptions ?? []).map(id => note('unknownRecipeOption', {id}))];
     planned.options = merged;
     planned.launch = launch;

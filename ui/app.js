@@ -121,6 +121,8 @@ const STRINGS = {
       'mechanism.openclaw': '原生 before_prompt_build 插件，配合严格 JSON 的启用键。',
       'steer.openclaw': '用户提醒；子代理会话另有子代理提示词和子代理提醒。',
       unknownRecipeOption: '未知的配方选项 {id}，已忽略。',
+      'foreign.generic': '{what}',
+      'foreign.genericDetail': '{detail}',
     },
     noteDetails: {
       'codex.note.newSession': 'model_instructions_file → prompts/recipe-switch/main.md；子代理文件 developer_instructions → sub.md',
@@ -273,6 +275,8 @@ const STRINGS = {
       'mechanism.openclaw': 'A native before_prompt_build plugin with strict-JSON enablement keys.',
       'steer.openclaw': 'User reminders; subagent sessions get the subagent prompt and reminder.',
       unknownRecipeOption: 'Unknown recipe option {id}; ignored.',
+      'foreign.generic': '{what}',
+      'foreign.genericDetail': '{detail}',
     },
     noteDetails: {
       'codex.note.newSession': 'model_instructions_file → prompts/recipe-switch/main.md; developer_instructions → sub.md',

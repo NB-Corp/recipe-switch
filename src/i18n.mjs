@@ -409,6 +409,14 @@ const CATALOG = {
     zh: '未知的配方选项 {id}，已忽略。',
     en: 'Unknown recipe option {id}; ignored.',
   },
+  'foreign.generic': {
+    zh: '{what}',
+    en: '{what}',
+  },
+  'foreign.genericDetail': {
+    zh: '{detail}',
+    en: '{detail}',
+  },
   'cli.replacedAt': {
     zh: '被替换的版本保存在',
     en: 'Replaced version saved at',
