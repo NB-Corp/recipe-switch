@@ -311,7 +311,9 @@ button { cursor: pointer; }
 .blocked-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
 .tech-key { font-size: 10.5px; color: var(--ink-3); margin-top: 3px; overflow-wrap: anywhere; }
 .result-next { text-align: center; margin: 0; font: 500 12.5px var(--display); color: var(--ink-2); }
-.result-row { display: grid; gap: 4px; align-items: center; padding: 8px 10px; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--card); text-align: left; }
+.result-row { display: grid; gap: 4px; padding: 8px 10px; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--card); text-align: left; }
+.result-row .path-row { display: flex; }
+.result-row .path-row > span { flex: 1; }
 .recipe-origin { max-width: 100%; }
 
 /* toast + skeleton */

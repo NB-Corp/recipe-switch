@@ -123,6 +123,14 @@ const STRINGS = {
       unknownRecipeOption: '未知的配方选项 {id}，已忽略。',
       'foreign.generic': '{what}',
       'foreign.genericDetail': '{detail}',
+      'result.installed': '已装上 {recipe}',
+      'result.switched': '已切换到 {recipe}',
+      'result.uninstalled': '已还原到装之前的原样',
+      'result.rolledBackTo': '已撤回到 {recipe}',
+      'result.rolledBack': '已撤回，回到装之前的原样',
+      'result.restoredOriginal': '已恢复原始快照，recipe-switch 已完全撤出这个目标',
+      'result.unchanged': '已经是最新状态，没有需要写入的改动',
+      'result.orphanBlobs': '原始文件已恢复；清理未使用的备份字节时需要人工看一下：{error}',
     },
     noteDetails: {
       'codex.note.newSession': 'model_instructions_file → prompts/recipe-switch/main.md；子代理文件 developer_instructions → sub.md',
@@ -277,6 +285,14 @@ const STRINGS = {
       unknownRecipeOption: 'Unknown recipe option {id}; ignored.',
       'foreign.generic': '{what}',
       'foreign.genericDetail': '{detail}',
+      'result.installed': 'Installed {recipe}',
+      'result.switched': 'Switched to {recipe}',
+      'result.uninstalled': 'Uninstalled; original state restored.',
+      'result.rolledBackTo': 'Rolled back to {recipe}',
+      'result.rolledBack': 'Rolled back; original state restored.',
+      'result.restoredOriginal': 'Restored original snapshot; recipe-switch is fully uninstalled from this target.',
+      'result.unchanged': 'Already up to date; nothing to write.',
+      'result.orphanBlobs': 'Original files restored; unused blob cleanup needs attention: {error}',
     },
     noteDetails: {
       'codex.note.newSession': 'model_instructions_file → prompts/recipe-switch/main.md; developer_instructions → sub.md',
@@ -327,7 +343,7 @@ function applyStatic() {
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs)) {
-    if (value === null || value === undefined || value === false) continue;
+    if (value === null || value === undefined || value === false || value === '') continue;
     if (key === 'class') node.className = value;
     else if (key.startsWith('on') && typeof value === 'function') node.addEventListener(key.slice(2), value);
     else node.setAttribute(key, value === true ? '' : value);
@@ -478,7 +494,8 @@ function toolRow(target) {
   const detail = el('div', {class: 'row-detail'},
     el('dl', {class: 'kv'},
       el('dt', {}, t('home')), el('dd', {}, pathRow(target.home)),
-      others.length ? [el('dt', {}, t('others')), el('dd', {}, others.map(o => `${liveLabel(o.label)} · ${o.where} (${t('liveOther')})`).join('；'))] : null,
+      others.length ? [el('dt', {}, t('others')), el('dd', {}, others.map(o => `${liveLabel(o.label)} (${t('liveOther')})`).join('；'), el('div', {class: 'mono tech-key'}, others.map(o => o.where).join('；')))] : null,
+
       managed.installed ? [el('dt', {}, t('since')), el('dd', {}, fmtTime(managed.since))] : null),
     techRows.length ? el('details', {class: 'more'}, el('summary', {}, t('techDetails'), el('span', {class: 'group-note'}, `${techRows.length}`)),
       el('div', {class: 'more-body'}, el('dl', {class: 'kv'}, techRows.flatMap(([name, text, detailText]) => [el('dt', {}, name), el('dd', {}, text, detailText ? el('div', {class: 'mono tech-key'}, detailText) : null)])))) : null,
@@ -798,7 +815,7 @@ function showResult(title, result) {
   if ((result.code === 'installed' || result.code === 'switched') && !result.launch) body.push(el('p', {class: 'result-next'}, t('nextStepCodex')));
   if (result.message) body.push(el('p', {class: 'result-sub'}, msg(result.message)));
   if (result.backup) body.push(el('div', {class: 'result-row'},
-    el('span', {class: 'field-label'}, `${t('backupSaved')} · ${displayPath(result.backup)}`), pathRow(result.backup)));
+    el('span', {class: 'field-label'}, t('backupSaved')), pathRow(result.backup)));
   for (const version of result.replacedVersions ?? []) body.push(el('div', {class: 'result-row'},
     el('span', {class: 'field-label'}, `${t('replacedAt')} ${displayPath(version.saved)}`), pathRow(version.saved)));
   if (result.launch) body.push(el('div', {class: 'launch'}, el('span', {class: 'field-label'}, t('launchTitle')), el('code', {}, result.launch)));
@@ -876,7 +893,7 @@ function renderSources() {
         el('div', {}, el('button', {class: 'btn', onclick: () => addLine('')}, t('addSource')))),
       el('label', {class: 'field'}, el('span', {class: 'field-label'}, t('gwtLabel')), el('span', {class: 'field-hint'}, t('gwtHint')), gwt),
       el('div', {}, save)),
-    note('bad', t('sourceErrors'), (state.recipes?.errors ?? []).map(error => `${displayPath(error.locator)} — ${error.error}`)),
+    (state.recipes?.errors?.length ? note('bad', t('sourceErrors'), state.recipes.errors.map(error => `${displayPath(error.locator)} — ${error.error}`)) : null),
     el('p', {class: 'group-note', style: 'margin:14px 4px'}, `${t('stateHome')} `, pathRow(state.overview?.stateHome ?? '')));
 }
 // ---------------------------------------------------------------- in-app guide
@@ -944,6 +961,7 @@ async function refresh() {
   } catch (error) { toast(`${t('loadFailed')}: ${error.message}`, true); }
   finally { button.classList.remove('is-spinning'); }
 }
+
 for (const node of document.querySelectorAll('.dock-item')) node.addEventListener('click', () => show(node.dataset.screen));
 document.getElementById('refreshBtn').addEventListener('click', refresh);
 document.getElementById('helpBtn').addEventListener('click', () => tour(0));
