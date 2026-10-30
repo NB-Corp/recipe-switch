@@ -1,11 +1,13 @@
 // Service layer shared by the CLI and the local web server.
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {Store, stateHome, plan, applyPlan, planUndo, applyUndo, planRestoreOriginal, applyRestoreOriginal, status, targetKey, redact} from './engine.mjs';
+import {Store, stateHome, plan, applyPlan, planUndo, applyUndo, planRestoreOriginal, applyRestoreOriginal, status, targetKey, redact, ownedUnits, deserialize} from './engine.mjs';
 import {readOriginals, originalBytes} from './originals.mjs';
 import {loadCatalog} from './sources.mjs';
 import {readJson} from './drivers/common.mjs';
-import {writeFile, toPosix, exists} from './fsx.mjs';
+import {writeFile, toPosix, exists, readFile} from './fsx.mjs';
+import {render} from './units.mjs';
+import {note} from './i18n.mjs';
 import * as native from './drivers/native.mjs';
 import * as builtin from './drivers/builtin.mjs';
 import * as plugins from './drivers/plugins.mjs';
@@ -87,6 +89,8 @@ export class Service {
         Object.assign(row, found, {managed: await status(this.store, driver.id, target.home),
           originals: await this.originals({harness: driver.id, home: target.home})});
         if (driver.choices) row.choices = await driver.choices(target.home);
+        // Runtime capability state, filled by the capability backend when present.
+        if (found.capabilities) row.capability = {state: found.capabilities.state ?? (found.capabilities.llmRequest ? 'confirmed' : 'unsupported'), ...(found.capabilities.reason ? {reason: found.capabilities.reason} : {})};
       } catch (error) { Object.assign(row, {present: false, error: error.message, live: [], foreign: [], managed: {installed: false, history: [], drift: []}}); }
       rows.push(row);
     }
@@ -124,11 +128,12 @@ export class Service {
       throw new Error(`${driver.name}: explicit main=off is unsupported by this entry point; choose a recipe with Main enabled.`);
     const {units, notes = [], launch} = await driver.desired(recipe, target, merged, {env: this.env});
     const planned = await plan({store: this.store, harness: driver.id, home: target, recipe, desired: units, notes, force});
+    const isForeign = item => item?.what?.id?.startsWith('foreign.') ?? (typeof item?.what === 'string' && item.what === 'Non-managed SYSTEM.md');
     const blocking = (found.foreign ?? []).filter(item => item.blocking && !managed.installed &&
-      !(driver.id === 'kimi-code' && recipe.texts.main === null && item.what === 'Non-managed SYSTEM.md'));
-    if (blocking.length && !force) planned.blocked.push(...blocking.map(item => `${item.what}: ${item.detail}`));
-    planned.warnings = [...(found.foreign ?? []).filter(item => !item.blocking).map(item => `${item.what}: ${item.detail}`),
-      ...(recipe.unknownOptions ?? []).map(id => `Unknown recipe option ${id}; ignored.`)];
+      !(driver.id === 'kimi-code' && recipe.texts.main === null && (item.what?.id === 'foreign.kimi.system' || item.what === 'Non-managed SYSTEM.md')));
+    if (blocking.length && !force) planned.blocked.push(...blocking.map(item => isForeign(item) ? {kind: 'foreign', text: item.what, detail: item.detail} : {kind: 'generic', text: `${item.what}: ${item.detail}`}));
+    planned.warnings = [...(found.foreign ?? []).filter(item => !item.blocking).map(item => isForeign(item) ? {kind: 'foreign', text: item.what, detail: item.detail} : {kind: 'generic', text: `${item.what}: ${item.detail}`}),
+      ...(recipe.unknownOptions ?? []).map(id => note('unknownRecipeOption', {id}))];
     planned.options = merged;
     planned.launch = launch;
     planned.current = managed.recipe ?? null;
@@ -173,6 +178,25 @@ export class Service {
       if (bytes !== null && !bytes.includes(0)) try { text = redact(new TextDecoder('utf-8', {fatal: true}).decode(bytes)); } catch {}
       return {path: entry.path, existed: entry.existed, size: entry.size, text, binary: bytes !== null && text === null};
     });
+  }
+
+  /** Managed (recipe-owned) bytes vs the live hand-edited file, for "See your edit". */
+  async driftDiff({harness, home, path: filePath}) {
+    const {driver, home: target} = await this.resolveTarget(harness, home);
+    const targetState = await this.store.target(targetKey(driver.id, target));
+    const unit = [...ownedUnits(targetState).values()].map(({latest}) => deserialize(latest))
+      .find(unit => toPosix(path.resolve(unit.path)) === toPosix(path.resolve(filePath)));
+    if (!unit) throw new Error('Not a managed file.');
+    unit.boundary ??= path.resolve(target);
+    const managed = render(unit, 'after', await readFile(unit.path));
+    const live = await readFile(unit.path);
+    const toText = bytes => {
+      if (bytes === null) return null;
+      try { return redact(new TextDecoder('utf-8', {fatal: true}).decode(bytes)); } catch { return '(binary)'; }
+    };
+    const {unifiedDiff} = await import('./diff.mjs');
+    const diff = unifiedDiff(managed === null ? null : toText(managed), live === null ? null : redact(toText(live)), {path: toPosix(unit.path)});
+    return {path: toPosix(unit.path), state: live === null ? 'missing' : 'edited', diff: diff.text, added: diff.added, removed: diff.removed};
   }
   async previewOriginal({harness, home, force = false}) {
     const {driver, home: target} = await this.resolveTarget(harness, home);

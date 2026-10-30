@@ -8,7 +8,8 @@ import {readFile, writeFile, restoreDisplaced, rmdirIfEmpty, equalBytes, toPosix
 import {inspect, inspectBytes, fingerprintOf, render, recordLayout, identity, ABSENT} from './units.mjs';
 import {unifiedDiff} from './diff.mjs';
 import {prepareOriginals, publishOriginals, readOriginals, originalBytes, collectOrphanBlobs} from './originals.mjs';
-import {releaseCarrierReferences, retireCarriers, RETENTION_LIMIT} from './retained.mjs';
+import {releaseCarrierReferences, retireCarriers} from './retained.mjs';
+import {note} from './i18n.mjs';
 
 export const MARK = 'managed by recipe-switch';
 export const stateHome = (env = process.env) => path.resolve(env.RECIPE_SWITCH_HOME || path.join(os.homedir(), '.recipe-switch'));
@@ -20,7 +21,7 @@ function serialize(unit) {
   for (const key of ['beforeBytes', 'afterBytes']) if (key in out) out[key] = enc(out[key]);
   return out;
 }
-function deserialize(unit) {
+export function deserialize(unit) {
   const out = {...unit};
   for (const key of ['beforeBytes', 'afterBytes']) if (key in out) out[key] = dec(out[key]);
   return out;
@@ -233,10 +234,10 @@ export async function plan({store, harness, home, recipe, desired, notes = [], f
     }
   }
   const files = await previewFiles(units, 'after');
-  const blocked = [...await publicationBlocks(units), ...(!force ? [...drift.map(d => `hand edit detected: ${d.path} (${d.unit})`), ...conflicts.map(c => `${c.reason}: ${c.path}`)] : [])];
+  const blocked = [...await publicationBlocks(units), ...(!force ? [...drift.map(d => ({kind: 'hand-edit', path: d.path, unit: d.unit})), ...conflicts.map(c => ({kind: 'conflict', path: c.path}))] : [])];
   return {id: crypto.randomUUID(), key, harness, home: toPosix(path.resolve(home)), kind: kind ?? (target?.stack?.length ? 'switch' : 'install'),
     stateVersion: stackIds(target), recipe: recipe && {key: recipe.key, id: recipe.id, name: recipe.name, version: recipe.version, revision: recipe.revision,
-      origin: recipe.origin, optionValues: recipe.optionValues ?? {}}, units, files, drift, conflicts, notes: [...notes, RETENTION_LIMIT, RESTORE_LIMIT], blocked, force};
+      origin: recipe.origin, optionValues: recipe.optionValues ?? {}}, units, files, drift, conflicts, notes: [...notes, note('retentionLimit'), note('restoreLimit')], blocked, force};
 }
 export function describe(unit) {
   if (unit.type === 'file') return 'managed file';
@@ -252,11 +253,16 @@ async function publicationBlocks(units) {
     if (dirs.has(dir)) continue;
     dirs.add(dir);
     const reason = await probeHardlinks(unit.path, unit.boundary);
-    if (reason) blocked.push(reason);
+    if (reason) blocked.push({kind: 'generic', text: reason});
   }
   return blocked;
 }
-export const RESTORE_LIMIT = '若探测后硬链接能力丢失，恢复会检查目标不存在后 rename；检查与 rename 之间被外部重新创建的目标无法原子保护。If hard-link support disappears after preview, recovery checks absence then renames; a target recreated between that check and rename cannot be protected atomically.';
+/** A blocked entry or its text form, for error messages that still join the list. */
+export const blockedText = item => typeof item === 'string' ? item
+  : item.kind === 'hand-edit' ? `hand edit detected: ${item.path} (${item.unit})`
+  : item.kind === 'conflict' ? `an unmanaged file already exists here: ${item.path}`
+  : item.kind === 'foreign' ? `${item.text?.en ?? item.text?.id ?? ''}: ${item.detail?.en ?? item.detail ?? ''}`
+  : item.text ?? '';
 
 // Presentation only. Integrity comparisons below always use real bytes.
 const SECRET = /((?:["']?)(?:authorization|proxy-authorization|x-api-key|api[_-]?key|set-cookie|cookie|auth|[\w.-]*(?:token|secret|password))["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'[^']*'|[^\r\n,}]+)/gi;
@@ -372,10 +378,10 @@ async function originalCandidates(target, rows) {
 }
 
 export async function applyPlan(store, planned) {
-  if (planned.blocked.length) throw new Error(`Plan is blocked:\n  ${planned.blocked.join('\n  ')}`);
+  if (planned.blocked.length) throw new Error(`Plan is blocked:\n  ${planned.blocked.map(blockedText).join('\n  ')}`);
   return store.transaction(async state => {
     if (JSON.stringify(stackIds(state.targets[planned.key])) !== JSON.stringify(planned.stateVersion)) throw new Error('Installation state changed since the preview; preview again.');
-    if (!planned.units.length) return {changed: false, message: 'Already up to date; nothing to write.'};
+    if (!planned.units.length) return {changed: false, code: 'unchanged', message: note('result.unchanged')};
     const units = planned.units.map(unit => ({...unit}));
     const rows = await prepare(units, 'after', 'before');
     checkPreview(rows, planned);
@@ -390,7 +396,8 @@ export async function applyPlan(store, planned) {
     const replacedVersions = await commitFiles(store, rows, state, backupDir, (created, replaced) => {
       op.createdDirs = created.map(toPosix); op.replacedVersions = replaced;
     }, knownDirs, originals);
-    return {changed: true, op: opId, backup: backupDir, replacedVersions, message: `${planned.kind === 'switch' ? 'Switched' : 'Installed'} ${planned.recipe?.key ?? ''}`};
+    return {changed: true, op: opId, backup: backupDir, replacedVersions, code: planned.kind === 'switch' ? 'switched' : 'installed',
+      message: note(planned.kind === 'switch' ? 'result.switched' : 'result.installed', {recipe: planned.recipe?.key ?? ''})};
   });
 }
 export async function planUndo(store, harness, home, {all = false, force = false} = {}) {
@@ -407,11 +414,11 @@ export async function planUndo(store, harness, home, {all = false, force = false
   const units = ops.flatMap(op => op.units.map(deserialize).reverse()).map(unit => ({...unit, boundary: unit.boundary ?? path.resolve(home)}));
   return {key, harness, home: toPosix(path.resolve(home)), kind: all ? 'uninstall' : 'rollback', ops: ops.map(op => op.id),
     restores: all ? null : target.stack.at(-2)?.recipe ?? null, files: await previewFiles(units, 'before'), drift,
-    notes: [RETENTION_LIMIT, RESTORE_LIMIT],
-    blocked: [...await publicationBlocks(units), ...(!force ? drift.map(d => `hand edit detected: ${d.path} (${d.unit})`) : [])], force};
+    notes: [note('retentionLimit'), note('restoreLimit')],
+    blocked: [...await publicationBlocks(units), ...(!force ? drift.map(d => ({kind: 'hand-edit', path: d.path, unit: d.unit})) : [])], force};
 }
 export async function applyUndo(store, planned) {
-  if (planned.blocked.length) throw new Error(`Blocked:\n  ${planned.blocked.join('\n  ')}`);
+  if (planned.blocked.length) throw new Error(`Blocked:\n  ${planned.blocked.map(blockedText).join('\n  ')}`);
   return store.transaction(async state => {
     const target = state.targets[planned.key];
     const ops = planned.kind === 'uninstall' ? [...(target?.stack ?? [])].reverse() : target?.stack?.length ? [target.stack.at(-1)] : [];
@@ -423,8 +430,9 @@ export async function applyUndo(store, planned) {
     target.stack.splice(target.stack.length - ops.length);
     if (!target.stack.length) delete state.targets[planned.key];
     const replacedVersions = await commitFiles(store, rows, state, backupDir, undefined, ops.flatMap(op => op.createdDirs ?? []));
-    return {changed: true, backup: backupDir, replacedVersions, message: planned.kind === 'uninstall' ? 'Uninstalled; original state restored.'
-      : planned.restores ? `Rolled back to ${planned.restores.key}` : 'Rolled back; original state restored.'};
+    return {changed: true, backup: backupDir, replacedVersions, code: planned.kind === 'uninstall' ? 'uninstalled' : 'rolledBack',
+      message: planned.kind === 'uninstall' ? note('result.uninstalled')
+        : planned.restores ? note('result.rolledBackTo', {recipe: planned.restores.key}) : note('result.rolledBack')};
   });
 }
 export async function planRestoreOriginal(store, harness, home, {force = false} = {}) {
@@ -452,12 +460,12 @@ export async function planRestoreOriginal(store, harness, home, {force = false} 
     return {id: crypto.randomUUID(), key, harness, home: toPosix(path.resolve(home)), kind: 'restore-original', units,
       stateVersion: stackIds(target), manifestVersion: sha256(await readFile(original.manifest)),
       files: await previewFiles(units, 'after'), drift, force,
-      notes: ['Restores complete original files and removes every recipe-switch operation for this target. Unrelated changes in these files also require force and are backed up first.', RETENTION_LIMIT, RESTORE_LIMIT],
-      blocked: [...await publicationBlocks(units), ...(!force ? drift.map(row => `hand edit detected: ${row.path} (${row.unit})`) : [])]};
+      notes: [note('restoreOriginalBody'), note('retentionLimit'), note('restoreLimit')],
+      blocked: [...await publicationBlocks(units), ...(!force ? drift.map(row => ({kind: 'hand-edit', path: row.path, unit: row.unit})) : [])]};
   });
 }
 export async function applyRestoreOriginal(store, planned) {
-  if (planned.blocked.length) throw new Error(`Blocked:\n  ${planned.blocked.join('\n  ')}`);
+  if (planned.blocked.length) throw new Error(`Blocked:\n  ${planned.blocked.map(blockedText).join('\n  ')}`);
   return store.transaction(async state => {
     const target = state.targets[planned.key], original = await readOriginals(store, planned.harness, planned.home);
     if (JSON.stringify(stackIds(target)) !== JSON.stringify(planned.stateVersion) || !original || sha256(await readFile(original.manifest)) !== planned.manifestVersion)
@@ -471,8 +479,8 @@ export async function applyRestoreOriginal(store, planned) {
     delete state.targets[planned.key];
     const replacedVersions = await commitFiles(store, rows, state, backupDir, undefined, dirs);
     const notes = [];
-    try { await collectOrphanBlobs(store); } catch (error) { notes.push(`Original files restored; unused blob cleanup needs attention: ${error.message}`); }
-    return {changed: true, backup: backupDir, replacedVersions, notes, message: 'Restored original snapshot; recipe-switch is fully uninstalled from this target.'};
+    try { await collectOrphanBlobs(store); } catch (error) { notes.push(note('result.orphanBlobs', {error: error.message})); }
+    return {changed: true, backup: backupDir, replacedVersions, notes, code: 'restoredOriginal', message: note('result.restoredOriginal')};
   });
 }
 

@@ -4,6 +4,10 @@ import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {Service, DRIVERS} from '../src/service.mjs';
 import {toPosix} from '../src/fsx.mjs';
+import {format, blockedMessage, cliLang, replacedAtLine} from '../src/i18n.mjs';
+
+/** A catalog item's text for the CLI language. */
+const textOf = (item, lang) => (typeof item === 'string' ? item : format(item, lang));
 
 const HELP = `recipe-switch — install, switch and roll back behavior recipes across coding harnesses
 
@@ -60,7 +64,7 @@ function recipeOptions(flags) {
   return out;
 }
 
-function printPlan(planned) {
+function printPlan(planned, lang = 'en') {
   const title = planned.kind === 'rollback' ? `Rollback ${planned.harness}${planned.restores ? ` → ${planned.restores.key}` : ' → original state'}`
     : planned.kind === 'uninstall' ? `Uninstall ${planned.harness} → original state`
     : planned.kind === 'restore-original' ? `Restore original ${planned.harness} → complete first-touch file snapshots`
@@ -68,25 +72,32 @@ function printPlan(planned) {
   console.log(`${title}\nTarget: ${planned.home}`);
   for (const file of planned.files) console.log(`\n${file.action.toUpperCase()} ${file.path}  (+${file.added} -${file.removed})\n${file.diff.trimEnd()}`);
   if (!planned.files.length) console.log('\nNo changes.');
-  for (const note of planned.notes ?? []) console.log(`note: ${note}`);
-  for (const warning of planned.warnings ?? []) console.log(`warning: ${warning}`);
+  for (const item of planned.notes ?? []) console.log(`note: ${format(item, lang)}`);
+  for (const warning of planned.warnings ?? []) console.log(`warning: ${blockedMessage(warning, lang)}`);
   if (planned.launch) console.log(`launch: ${planned.launch}`);
-  if (planned.blocked?.length) console.log(`\nBlocked:\n  ${planned.blocked.join('\n  ')}\nResolve the item, or pass --force to override.`);
+  if (planned.blocked?.length) console.log(`\nBlocked:\n  ${planned.blocked.map(item => blockedMessage(item, lang)).join('\n  ')}\nResolve the item, or pass --force to override.`);
+}
+
+/** Apply result: message in the CLI language + backup/replaced-version lines. */
+function printResult(result, lang = 'en') {
+  console.log(`\n${result.message?.id ? format(result.message, lang) : result.message}${result.backup ? `\nBackup: ${result.backup}` : ''}`);
+  for (const version of result.replacedVersions ?? []) console.log(replacedAtLine(version.saved, lang));
 }
 
 export async function main(argv = process.argv.slice(2), service = new Service()) {
   const {args, flags} = parse(argv), [command, ...rest] = args;
   if (!command || flags.help || command === 'help') { console.log(HELP); return; }
+  const lang = cliLang(service.env ?? process.env, flags.lang);
   if (command === 'status') {
     const view = await service.overview();
     if (flags.json) { console.log(JSON.stringify(view, null, 2)); return; }
     console.log(`State: ${view.stateHome}`);
     for (const row of view.targets) {
       const managed = row.managed?.installed ? `recipe-switch: ${row.managed.recipe.key}` : 'recipe-switch: —';
-      const others = (row.live ?? []).filter(item => !item.managed).map(item => `${item.label} (${item.where})`);
+      const others = (row.live ?? []).filter(item => !item.managed).map(item => `${textOf(item.label, lang)} (${item.where})`);
       console.log(`\n${row.name}${row.label ? ` [${row.label}]` : ''}  ${row.present ? 'detected' : 'not found'}  ${row.home}\n  ${managed}`);
       if (others.length) console.log(`  other: ${others.join('; ')}`);
-      for (const item of row.foreign ?? []) console.log(`  ${item.blocking ? 'blocks' : 'note'}: ${item.what} — ${item.detail}`);
+      for (const item of row.foreign ?? []) console.log(`  ${item.blocking ? 'blocks' : 'note'}: ${textOf(item.what, lang)} — ${textOf(item.detail, lang)}`);
       for (const item of row.managed?.drift ?? []) console.log(`  hand edit: ${item.path} (${item.state})`);
     }
     console.log('\nNot covered:');
@@ -131,12 +142,11 @@ export async function main(argv = process.argv.slice(2), service = new Service()
     const [harness] = rest;
     if (!harness) throw new Error('Usage: recipe-switch restore-original <harness> [--home DIR] [--yes] [--force]');
     const planned = await service.previewOriginal({harness, home: flags.home, force: flags.force});
-    printPlan(planned);
+    printPlan(planned, lang);
     if (!flags.yes) { console.log('\nDry run. Re-run with --yes to apply.'); return planned; }
     if (planned.blocked.length) { process.exitCode = 2; return planned; }
     const result = await service.apply(planned.id);
-    console.log(`\n${result.message}\nBackup: ${result.backup}`);
-    for (const version of result.replacedVersions ?? []) console.log(`被替换的版本保存在 ${version.saved}`);
+    printResult(result, lang);
     return result;
   }
   if (['install', 'switch'].includes(command)) {
@@ -144,24 +154,22 @@ export async function main(argv = process.argv.slice(2), service = new Service()
     if (!harness || !recipe) throw new Error(`Usage: recipe-switch ${command} <harness> <recipe>`);
     const planned = await service.preview({harness, home: flags.home, recipe, options: options(flags), recipeOptions: recipeOptions(flags), force: flags.force});
     if (command === 'install' && planned.kind === 'switch') console.log('(already managed: this is a switch)');
-    printPlan(planned);
+    printPlan(planned, lang);
     if (!flags.yes) { console.log('\nDry run. Re-run with --yes to apply.'); return planned; }
     if (planned.blocked.length) { process.exitCode = 2; return planned; }
     const result = await service.apply(planned.id);
-    console.log(`\n${result.message}${result.backup ? `\nBackup: ${result.backup}` : ''}`);
-    for (const version of result.replacedVersions ?? []) console.log(`被替换的版本保存在 ${version.saved}`);
+    printResult(result, lang);
     return result;
   }
   if (['rollback', 'uninstall'].includes(command)) {
     const [harness] = rest;
     if (!harness) throw new Error(`Usage: recipe-switch ${command} <harness>`);
     const planned = await service.previewUndo({harness, home: flags.home, all: command === 'uninstall', force: flags.force});
-    printPlan(planned);
+    printPlan(planned, lang);
     if (!flags.yes) { console.log('\nDry run. Re-run with --yes to apply.'); return planned; }
     if (planned.blocked.length) { process.exitCode = 2; return planned; }
     const result = await service.applyUndo(planned.id);
-    console.log(`\n${result.message}\nBackup: ${result.backup}`);
-    for (const version of result.replacedVersions ?? []) console.log(`被替换的版本保存在 ${version.saved}`);
+    printResult(result, lang);
     return result;
   }
   if (command === 'history') {

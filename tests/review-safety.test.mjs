@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
-import {sandbox, ROOT, exists} from './helpers.mjs';
+import {sandbox, ROOT, exists, joinText} from './helpers.mjs';
 import {Store, plan, applyPlan, planUndo, applyUndo, status, redact} from '../src/engine.mjs';
 import {writeFile} from '../src/fsx.mjs';
 import {fileUnit, tomlKeyUnit, jsonItemUnit} from '../src/drivers/common.mjs';
@@ -171,7 +171,7 @@ test('R09: OpenClaw explicit conversation denial blocks even force; absent permi
   assert.equal(await fs.readFile(file, 'utf8'), original);
   await fs.writeFile(file, '{}\n');
   const desired = await openclaw.desired(recipe, b.home, {}, {env: {}});
-  assert.match(desired.notes.join('\n'), /prerequisite.*allowConversationAccess/);
+  assert.match(joinText(desired.notes), /requires non-bundled plugins to be granted conversation access/);
   await install(b, desired.units);
   assert.equal(JSON.parse(await fs.readFile(file, 'utf8')).plugins.entries['recipe-switch'].hooks?.allowConversationAccess, undefined);
   await applyUndo(b.store, await undoPlan(b));
@@ -183,7 +183,7 @@ test('R10: edits to the owned TOML marker line cause drift and block uninstall',
   await install(b, [tomlKeyUnit(file, [], 'recipe', 'managed')]);
   await fs.writeFile(file, (await fs.readFile(file, 'utf8')).replace('# managed by recipe-switch', '# USER NOTE'));
   assert.equal((await status(b.store, 'fixture', b.home)).drift.length, 1);
-  const planned = await undoPlan(b); assert.match(planned.blocked.join('\n'), /hand edit/);
+  const planned = await undoPlan(b); assert.match(joinText(planned.blocked), /hand edit/);
   await assert.rejects(applyUndo(b.store, planned), /Blocked/);
   assert.match(await fs.readFile(file, 'utf8'), /USER NOTE/);
 });
@@ -248,7 +248,7 @@ test('Hermes: YAML owned-line drift blocks, unrelated changes survive exact unin
   const managed = await fs.readFile(file, 'utf8');
   await fs.writeFile(file, managed.replace('# managed by recipe-switch', '# USER MARKER'));
   assert.equal((await status(b.store, 'fixture', b.home)).drift.length, 1);
-  assert.match((await undoPlan(b)).blocked.join('\n'), /hand edit/);
+  assert.match(joinText((await undoPlan(b)).blocked), /hand edit/);
   await fs.writeFile(file, managed.replace('model: keep', 'model: changed'));
   await applyUndo(b.store, await undoPlan(b));
   assert.equal(await fs.readFile(file, 'utf8'), original.replace('model: keep', 'model: changed'));
@@ -315,7 +315,7 @@ test('R11: lexical hand edits of an owned JSON member block restoration instead 
   const edited = (await fs.readFile(file, 'utf8')).replace('"dep":"MANAGED"', '"dep" :  "MANAGED"');
   await fs.writeFile(file, edited);
   assert.equal((await status(b.store, 'fixture', b.home)).drift.length, 1);
-  const planned = await undoPlan(b); assert.match(planned.blocked.join('\n'), /hand edit/);
+  const planned = await undoPlan(b); assert.match(joinText(planned.blocked), /hand edit/);
   await assert.rejects(applyUndo(b.store, planned), /Blocked/);
   assert.equal(await fs.readFile(file, 'utf8'), edited);
 });

@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {sandbox, exists, install, undo} from './helpers.mjs';
+import {sandbox, exists, install, undo, joinText, textOf} from './helpers.mjs';
 import {Store, plan, applyPlan, planUndo, applyUndo, status, targetKey} from '../src/engine.mjs';
 import {fileUnit} from '../src/drivers/common.mjs';
 import {withLock} from '../src/fsx.mjs';
@@ -114,11 +114,11 @@ test('R09: absent permission is untouched; explicit opt-in writes it, survives a
   service.homes.openclaw = file('openclaw');
   const config = file('openclaw/openclaw.json'); await put(config, '{}\n');
   let {planned} = await install(service, 'openclaw', recipe.key);
-  assert.match(planned.notes.join('\n'), /prerequisite.*allowConversationAccess/);
+  assert.match(joinText(planned.notes), /requires non-bundled plugins to be granted conversation access/);
   assert.equal(JSON.parse(await read('openclaw/openclaw.json')).plugins.entries['recipe-switch'].hooks?.allowConversationAccess, undefined);
   await undo(service, 'openclaw', {all: true}); assert.equal(await read('openclaw/openclaw.json'), '{}\n');
   ({planned} = await install(service, 'openclaw', recipe.key, {options: {grantConversationAccess: true}}));
-  assert.match(planned.notes.join('\n'), /explicitly granted/);
+  assert.match(joinText(planned.notes), /explicitly granted conversation access/);
   assert.equal(JSON.parse(await read('openclaw/openclaw.json')).plugins.entries['recipe-switch'].hooks.allowConversationAccess, true);
   const switched = await install(service, 'openclaw', recipe.key);
   assert.equal(switched.planned.options.grantConversationAccess, false, 'saved grant is not fresh consent');
@@ -202,10 +202,10 @@ for (const supported of [false, true]) test(`R19: read-only host capability prob
   const {planned} = await install(b.service, 'hermes', recipe.key);
   const row = (await b.service.overview()).targets.find(row => row.harness === 'hermes');
   assert.equal(row.capabilities.main, supported); assert.equal(row.capabilities.sub, supported);
-  if (supported) { assert.match(planned.notes.join('\n'), /appended in full/); assert.match(await fs.readFile(path.join(home, 'plugins/recipe-switch/plugin.yaml'), 'utf8'), /provides_middleware/); }
+  if (supported) { assert.match(joinText(planned.notes), /frozen per session/); assert.match(await fs.readFile(path.join(home, 'plugins/recipe-switch/plugin.yaml'), 'utf8'), /provides_middleware/); }
   else {
-    assert.match(row.mechanism, /Main\/Sub unavailable/);
-    assert.match(planned.notes.join('\n'), /只装每轮 steering；主\/子代理系统提示暂不可用/);
+    assert.match(textOf(row.mechanism), /Main\/Sub prompts unavailable/);
+    assert.match(joinText(planned.notes), /only per-turn reminders are installed/);
     assert.doesNotMatch(await fs.readFile(path.join(home, 'plugins/recipe-switch/plugin.yaml'), 'utf8'), /provides_middleware/);
   }
   const python = String.raw`import importlib.util,sys

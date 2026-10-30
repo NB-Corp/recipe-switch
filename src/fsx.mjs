@@ -1,5 +1,6 @@
 // Small filesystem helpers: exact bytes, atomic replace, hashing.
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
@@ -257,6 +258,19 @@ export async function listFiles(dir) {
 }
 
 export const toPosix = value => value.replaceAll('\\', '/');
+
+/** Home-relative display form; middle-ellipsized when longer than max. */
+export function displayPath(value, {max = 48, env = process.env} = {}) {
+  let p = toPosix(String(value ?? ''));
+  const rawHome = env.RECIPE_SWITCH_USER_HOME || (process.platform === 'win32' ? env.USERPROFILE : env.HOME) || os.homedir();
+  const home = toPosix(path.resolve(rawHome));
+  if (home && (p === home || p.startsWith(home + '/'))) p = '~' + p.slice(home.length);
+  if (p.length > max) {
+    const head = Math.ceil((max - 1) / 2), tail = Math.floor((max - 1) / 2);
+    p = p.slice(0, head) + '…' + p.slice(p.length - tail);
+  }
+  return p;
+}
 
 export function isInside(parent, child) {
   const relative = path.relative(parent, child);

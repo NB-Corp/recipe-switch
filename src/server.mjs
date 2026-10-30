@@ -43,6 +43,7 @@ export function createServer({service = new Service(), token = crypto.randomByte
     'POST /api/config': body => service.saveConfig({...(body.sources ? {sources: body.sources} : {}), ...(body.gwt ? {gwt: body.gwt} : {})}),
     'POST /api/preview': async body => strip(await service.preview(body)),
     'POST /api/preview-undo': async body => strip(await service.previewUndo(body)),
+    'GET /api/drift-diff': (_, query) => service.driftDiff({harness: query.get('harness'), home: query.get('home') || undefined, path: query.get('path')}),
     'GET /api/originals': (_, query) => service.originals({harness: query.get('harness'), home: query.get('home') || undefined}),
     'GET /api/original-file': (_, query) => service.originalText({harness: query.get('harness'), home: query.get('home') || undefined, id: Number(query.get('id'))}),
     'POST /api/preview-original': async body => strip(await service.previewOriginal(body)),

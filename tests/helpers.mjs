@@ -5,6 +5,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {makeSandbox} from '../scripts/demo.mjs';
 import {Service} from '../src/service.mjs';
+import {format} from '../src/i18n.mjs';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const GWT = process.env.RECIPE_SWITCH_GWT || path.resolve(ROOT, '..', 'gpt-with-taste');
@@ -25,6 +26,19 @@ export async function sandbox(t, {sources} = {}) {
 
 export const exists = target => fs.access(target).then(() => true, () => false);
 
+/** Join a blocked/notes/warnings list into one English string for assertions. */
+export const joinText = list => (list ?? []).map(item => {
+  if (typeof item === 'string') return item;
+  if (item.id) return format(item, 'en'); // catalog note {id, vars}
+  if (item.kind === 'hand-edit') return `hand edit detected: ${item.path} (${item.unit})`;
+  if (item.kind === 'conflict') return `an unmanaged file already exists here: ${item.path}`;
+  if (item.kind === 'foreign') return `${joinText([item.text])}: ${joinText([item.detail])}`;
+  return item.text ?? '';
+}).join('\n');
+
+/** A catalog item's text in one language (default English). */
+export const textOf = (item, lang = 'en') => (typeof item === 'string' ? item : format(item, lang));
+
 /** Snapshot every file under dir (excluding loader state) as {rel: bytes-hex}. */
 export async function tree(dir, skip = ['state']) {
   const out = {};
@@ -42,12 +56,12 @@ export async function tree(dir, skip = ['state']) {
 
 export async function install(service, harness, recipe, extra = {}) {
   const planned = await service.preview({harness, recipe, ...extra});
-  if (planned.blocked.length) throw new Error(`blocked: ${planned.blocked.join('; ')}`);
+  if (planned.blocked.length) throw new Error(`blocked: ${joinText(planned.blocked)}`);
   return {planned, result: await service.apply(planned.id)};
 }
 
 export async function undo(service, harness, extra = {}) {
   const planned = await service.previewUndo({harness, ...extra});
-  if (planned.blocked.length) throw new Error(`blocked: ${planned.blocked.join('; ')}`);
+  if (planned.blocked.length) throw new Error(`blocked: ${joinText(planned.blocked)}`);
   return {planned, result: await service.applyUndo(planned.id)};
 }

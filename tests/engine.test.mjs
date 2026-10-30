@@ -6,7 +6,7 @@ import {Store, plan, applyPlan, planUndo, applyUndo, status} from '../src/engine
 import {fileUnit, tomlKeyUnit, jsonItemUnit} from '../src/drivers/common.mjs';
 import {writeKeyLine, readKeyLine} from '../src/vendor/toml-key.mjs';
 import {setKey, setArrayItem} from '../src/json-edit.mjs';
-import {ROOT, tree} from './helpers.mjs';
+import {ROOT, tree, joinText} from './helpers.mjs';
 
 async function scratch(t) {
   await fs.mkdir(path.join(ROOT, '.tmp', 'test'), {recursive: true});
@@ -94,7 +94,7 @@ test('an unmanaged file at a target path is a conflict; a file changed after pre
   await fs.mkdir(path.join(home, 'rl'));
   await fs.writeFile(path.join(home, 'rl', 'main.md'), 'someone else\n');
   const planned = await plan({store, harness: 't', home, recipe: recipe(1), desired: [fileUnit(path.join(home, 'rl', 'main.md'), 'MAIN\n')]});
-  assert.match(planned.blocked[0], /unmanaged file already exists/);
+  assert.match(joinText(planned.blocked), /unmanaged file already exists/);
 
   await fs.rm(path.join(home, 'rl'), {recursive: true});
   const fresh = await plan({store, harness: 't', home, recipe: recipe(1), desired: [fileUnit(path.join(home, 'a.md'), 'A'), fileUnit(path.join(home, 'b.md'), 'B')]});

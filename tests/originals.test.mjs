@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {sandbox, exists} from './helpers.mjs';
+import {sandbox, exists, joinText} from './helpers.mjs';
 import {Store, plan, applyPlan, planRestoreOriginal, applyRestoreOriginal, status} from '../src/engine.mjs';
 import {readOriginals, originalBytes} from '../src/originals.mjs';
 import {fileUnit} from '../src/drivers/common.mjs';
@@ -57,7 +57,7 @@ test('originals: whole-file hand edits block restoration; force backs up the com
   await put(file, before); await change(b, 'fixture', 'MAIN');
   const edited = (await fs.readFile(file, 'utf8')).replace('keep', 'USER MODEL'); await put(file, edited);
   const blocked = await planRestoreOriginal(b.store, 'fixture', home);
-  assert.equal(blocked.drift.length, 1); assert.match(blocked.blocked.join('\n'), /hand edit/);
+  assert.equal(blocked.drift.length, 1); assert.match(joinText(blocked.blocked), /hand edit/);
   await assert.rejects(applyRestoreOriginal(b.store, blocked), /Blocked/);
   assert.equal(await fs.readFile(file, 'utf8'), edited);
   const forced = await planRestoreOriginal(b.store, 'fixture', home, {force: true}), result = await applyRestoreOriginal(b.store, forced);

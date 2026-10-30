@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
-import {sandbox, exists} from './helpers.mjs';
+import {sandbox, exists, joinText} from './helpers.mjs';
 import {Store, plan, applyPlan, planUndo, applyUndo} from '../src/engine.mjs';
 import {restoreDisplaced} from '../src/fsx.mjs';
 import {fileUnit} from '../src/drivers/common.mjs';
@@ -27,8 +27,8 @@ test('R23: preview blocks unsafe filesystems in CLI/UI, even under force; target
   fs.copyFile = async () => { copied = true; throw Error('must never copy'); };
   try {
     const planned = await preview(b, 'NEXT', {force: true});
-    assert.match(planned.blocked.join('\n'), /该位置的文件系统不支持硬链接（常见于 FAT\/exFAT\/部分网络盘），recipe-switch 无法保证安全写入/);
-    assert.match(planned.blocked.join('\n'), /filesystem does not support hard links/);
+    assert.match(joinText(planned.blocked), /该位置的文件系统不支持硬链接（常见于 FAT\/exFAT\/部分网络盘），recipe-switch 无法保证安全写入/);
+    assert.match(joinText(planned.blocked), /filesystem does not support hard links/);
     await assert.rejects(applyPlan(b.store, planned), /blocked/);
     assert.equal(await fs.readFile(b.target, 'utf8'), 'ORIGINAL\r\n');
     assert.deepEqual(await fs.readdir(path.dirname(b.target)), ['main']);
