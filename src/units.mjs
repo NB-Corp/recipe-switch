@@ -3,15 +3,20 @@
 //   tomlKey       one single-line string key of a user TOML file (line-exact edit)
 //   jsonArrayItem one string item of an array inside a user JSON file
 //   jsonKey       one key of an object inside a user JSON file
+//   jsonArrayRecord one object matched by id in a user JSON array
+//   yamlArrayItem one string in Hermes's plugins.enabled block list
 // A unit is compared through a fingerprint so drift (a hand edit) is detected
 // before anything is written or restored.
 import path from 'node:path';
 import {readFile, writeFile, sha256, decode, equalBytes} from './fsx.mjs';
 import {readKeyLine, writeKeyLine, splitKey} from './vendor/toml-key.mjs';
 import {setArrayItem, getKey, setKey} from './json-edit.mjs';
+import {getRecord, setRecord} from './json-record.mjs';
+import {inspectYamlList, editYamlList} from './yaml-list.mjs';
+
+const valueUnit = unit => ['jsonKey', 'jsonArrayRecord'].includes(unit.type);
 
 export const ABSENT = 'absent';
-const fail = message => { throw new Error(message); };
 
 function tomlValue(line) {
   if (line === null) return ABSENT;
@@ -39,10 +44,15 @@ export async function inspect(unit) {
     if (list !== undefined && !Array.isArray(list)) throw new Error(`${unit.pointer.join('.')} is not an array in ${unit.path}`);
     return {fp: list?.includes(unit.value) ? 'present' : ABSENT, bytes};
   }
-  if (unit.type === 'jsonKey') {
+  if (unit.type === 'yamlArrayItem') {
+    const state = inspectYamlList(decode(bytes), unit.value);
+    return {fp: state.present ? 'present' : ABSENT, bytes, createdDepth: state.createdDepth};
+  }
+  if (valueUnit(unit)) {
     if (bytes === null) return {fp: ABSENT, bytes};
     let value;
-    try { value = getKey(decode(bytes), unit.pointer); } catch { throw new Error(`Not valid JSON; refusing to edit: ${unit.path}`); }
+    try { value = unit.type === 'jsonArrayRecord' ? getRecord(decode(bytes), unit.pointer, unit.value) : getKey(decode(bytes), unit.pointer); }
+    catch (error) { throw new Error(`Cannot edit JSON in ${unit.path}: ${error.message}`); }
     return {fp: value === undefined ? ABSENT : 'value:' + JSON.stringify(value), bytes};
   }
   throw new Error(`Unknown unit type ${unit.type}`);
@@ -55,7 +65,7 @@ export function fingerprintOf(unit, side) {
     return bytes === null ? ABSENT : 'sha256:' + sha256(bytes);
   }
   if (unit.type === 'tomlKey') return tomlValue(unit[side + 'Line']);
-  if (unit.type === 'jsonKey') return unit[side + 'Value'] === undefined ? ABSENT : 'value:' + JSON.stringify(unit[side + 'Value']);
+  if (valueUnit(unit)) return unit[side + 'Value'] === undefined ? ABSENT : 'value:' + JSON.stringify(unit[side + 'Value']);
   return unit[side + 'Present'] ? 'present' : ABSENT;
 }
 
@@ -69,18 +79,37 @@ export function render(unit, side, current) {
     if (line === null && unit.fileCreated && text.trim() === '') return null;
     return Buffer.from(text);
   }
-  if (unit.type === 'jsonKey') {
-    if (current === null) fail(`${unit.path} does not exist`);
-    let text = decode(current);
-    const value = unit[side + 'Value'], parent = unit.pointer.slice(0, -1);
+  // New plugin drivers preserve even empty-object/array whitespace on undo.
+  // If unrelated content changed, fall back to the surgical edit; existing
+  // drivers and old state records keep their original rendering behavior.
+  if (side === 'before' && unit.layoutAfter !== undefined && decode(current) === unit.layoutAfter)
+    return unit.layoutBefore === null ? null : Buffer.from(unit.layoutBefore);
+  if (unit.type === 'yamlArrayItem') {
+    const text = editYamlList(decode(current), unit.value, unit[side + 'Present'], unit.createdDepth);
+    return unit.fileCreated && !text.trim() ? null : Buffer.from(text);
+  }
+  if (valueUnit(unit)) {
+    const value = unit[side + 'Value'];
+    if (current === null && value === undefined) return null;
+    let text = current === null ? '{}\n' : decode(current);
     if (value !== undefined) {
-      for (let depth = 1; depth <= parent.length; depth++)
-        if (getKey(text, parent.slice(0, depth)) === undefined) text = setKey(text, parent.slice(0, depth), {});
-      return Buffer.from(setKey(text, unit.pointer, value));
+      text = ensureParents(text, unit.pointer);
+      return Buffer.from(unit.type === 'jsonArrayRecord' ? setRecord(text, unit.pointer, unit.value, value) : setKey(text, unit.pointer, value));
     }
-    text = setKey(text, unit.pointer, undefined);
-    if (unit.parentCreated && parent.length && JSON.stringify(getKey(text, parent)) === '{}') text = setKey(text, parent, undefined);
-    return Buffer.from(text);
+    text = unit.type === 'jsonArrayRecord' ? setRecord(text, unit.pointer, unit.value, undefined) : setKey(text, unit.pointer, undefined);
+    // Keep the original existing-file jsonKey removal behavior for old records.
+    if (unit.createdDepth === undefined) {
+      const parent = unit.pointer.slice(0, -1);
+      if (unit.parentCreated && parent.length && JSON.stringify(getKey(text, parent)) === '{}') text = setKey(text, parent, undefined);
+    } else {
+      const start = unit.type === 'jsonArrayRecord' ? unit.pointer.length : unit.pointer.length - 1;
+      for (let depth = start; depth > unit.pointer.length - unit.createdDepth; depth--) {
+        const at = unit.pointer.slice(0, depth), child = getKey(text, at);
+        if (!child || typeof child !== 'object' || Object.keys(child).length) break;
+        text = setKey(text, at, undefined);
+      }
+    }
+    return unit.fileCreated && JSON.stringify(JSON.parse(text.replace(/^\uFEFF/, ''))) === '{}' ? null : Buffer.from(text);
   }
   // jsonArrayItem: position-preserving edit. Missing parents are created; on
   // removal, an array (and parents) the loader created are dropped again.
@@ -113,6 +142,10 @@ function ensureParents(text, pointer) {
 export async function apply(unit, side) {
   const current = await readFile(unit.path);
   const next = render(unit, side, current);
+  if (side === 'after' && (unit.preserveLayout || ['yamlArrayItem', 'jsonArrayRecord'].includes(unit.type) || unit.type === 'jsonKey' && (unit.fileCreated || unit.createdDepth > 1))) {
+    unit.layoutBefore = current === null ? null : decode(current);
+    unit.layoutAfter = next === null ? '' : decode(next);
+  }
   if (equalBytes(current, next)) return [];
   return writeFile(unit.path, next);
 }

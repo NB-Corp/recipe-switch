@@ -1,0 +1,8 @@
+{
+  "name": "recipe-switch",
+  "version": "1.0.0",
+  "description": "User-turn recipe steering, managed by recipe-switch.",
+  "hooks": [
+    {"event": "UserPromptSubmit", "command": "node ./steer.mjs", "timeout": 5}
+  ]
+}

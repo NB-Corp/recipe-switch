@@ -1,0 +1,8 @@
+# managed by recipe-switch
+name: recipe-switch
+version: "1.0.0"
+description: "Full session-frozen behavior recipes and turn steering, managed by recipe-switch."
+provides_hooks:
+  - pre_llm_call
+provides_middleware:
+  - llm_request

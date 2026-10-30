@@ -20,6 +20,10 @@ export async function makeSandbox(dir) {
   await put('claude/settings.json', '{\n  "model": "opus"\n}\n');
   await put('grok/rules/engineering.md', '# My engineering rules\n');
   await put('opencode/opencode.json', '{\n  "$schema": "https://opencode.ai/config.json",\n  "model": "axon/gpt-5.5"\n}\n');
+  await put('kimi-code/config.toml', '# fake Kimi Code home\ndefault_model = "kimi-k2"\n');
+  await put('hermes/config.yaml', '# fake Hermes home\nmodel:\n  default: hermes-4\nplugins:\n  enabled:\n    - memory-tools\n');
+  await put('hermes/SOUL.md', '# My Hermes identity\n');
+  await put('openclaw/openclaw.json', '{\n  "agents": {"defaults": {"model": "anthropic/claude-opus"}}\n}\n');
   // A second recipe with options, so the panel's switches have something to show.
   await put('recipes/calm-reviewer/recipe.toml', DEMO_RECIPE);
   await put('recipes/calm-reviewer/main.md', '# Calm Reviewer\n\nRead the whole change before judging it.\n\n## Findings\n\nReport concrete defects with file and line.\n\n## Tone\n\nPlain and brief.\n');
@@ -67,6 +71,7 @@ export function sandboxEnv(dir) {
     RECIPE_SWITCH_HOME: path.join(dir, 'state'), CODEX_HOME: path.join(dir, 'codex'), KIKI_HOME: path.join(dir, 'kiki'),
     PI_CODING_AGENT_DIR: path.join(dir, 'pi/agent'), DSH_HOME: path.join(dir, 'dsh'), CLAUDE_CONFIG_DIR: path.join(dir, 'claude'),
     OMP_CODING_AGENT_DIR: path.join(dir, 'omp/agent'), GROK_HOME: path.join(dir, 'grok'), OPENCODE_CONFIG_DIR: path.join(dir, 'opencode'),
+    KIMI_CODE_HOME: path.join(dir, 'kimi-code'), HERMES_HOME: path.join(dir, 'hermes'), OPENCLAW_STATE_DIR: path.join(dir, 'openclaw'),
   };
 }
 

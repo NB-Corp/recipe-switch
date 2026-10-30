@@ -53,6 +53,9 @@ Common flags: `--home DIR` picks one target (required for DSH when several profi
 | Oh My Pi | `OMP_CODING_AGENT_DIR`, `~/.omp/agent` | `extensions/recipe-switch/` (gpt-with-taste OMP adapter) | Through the adapter (GPT models) |
 | Grok Build | `GROK_HOME`, `~/.grok` | `rules/recipe-switch.md`; other rules keep loading | None: Grok hooks cannot add context |
 | OpenCode | `OPENCODE_CONFIG_DIR`, `$XDG_CONFIG_HOME/opencode` | `recipe-switch/main.md` plus one item in the `instructions` array of `opencode.json` | None yet |
+| Kimi Code CLI | `KIMI_CODE_HOME`, `~/.kimi-code` | Marked `SYSTEM.md` with `${base_prompt}` followed by Main; `plugins/managed/recipe-switch/{kimi.plugin.json,steer.mjs,recipe.json}` plus one object in `plugins/installed.json`. A non-managed `SYSTEM.md` blocks installation. Restart after installation or Main changes; explicit agent profiles can override `SYSTEM.md` | User Steer re-read on each `UserPromptSubmit`; subagent profiles are unchanged |
+| Hermes Agent | `HERMES_HOME`; Windows `%LOCALAPPDATA%/hermes`, otherwise `~/.hermes` | `plugins/recipe-switch/{plugin.yaml,__init__.py,recipe.json}` and one block-list item in `config.yaml` → `plugins.enabled`. Restart after plugin install/update. `llm_request` appends full Main/Sub to Chat system/developer messages, Anthropic/Bedrock system blocks or Responses instructions. Each session's first request freezes its text in the running plugin; switches affect new sessions. Native `codex_app_server`, auxiliary and max-iteration summary calls bypass this middleware. Flow-style YAML/anchors at the edited keys block installation | User/Sub Steer re-read at `pre_llm_call`; delegated children use Sub |
+| OpenClaw | `OPENCLAW_STATE_DIR`, otherwise `<OPENCLAW_HOME or OS home>/.openclaw`; config override `OPENCLAW_CONFIG_PATH` | `extensions/recipe-switch/{package.json,openclaw.plugin.json,index.mjs,recipe.json}`; `plugins.entries.recipe-switch.enabled`, `.hooks.allowConversationAccess` and an item in an existing `plugins.allow`. Config must be strict JSON; JSON5-only syntax blocks installation. Restart Gateway after install; later switches take effect on the next prompt build. `AGENTS.md`/`SOUL.md` stay unchanged | Main/User Steer, or Sub/Sub Steer for subagent session keys |
 
 The Pi and DSH plugins in `plugins/` are adapted from the gpt-with-taste runtimes, with the text source changed to the loader's snapshot. That lets one installed plugin carry any recipe.
 
@@ -60,9 +63,6 @@ The Pi and DSH plugins in `plugins/` are adapted from the gpt-with-taste runtime
 
 | Harness | Reason |
 | --- | --- |
-| Kimi Code CLI | Its persistent slot, `SYSTEM.md`, replaces the whole built-in main prompt, including tools and environment guidance. `AGENTS.md` belongs to the user. A plugin `systemPromptPath` adapter is needed first |
-| Hermes Agent | `SOUL.md` is the user's identity slot. Behavior belongs in a `pre_llm_call` plugin, which has no adapter yet |
-| OpenClaw | Instructions live in the user's workspace `AGENTS.md`/`SOUL.md`. A `before_prompt_build` plugin adapter is not built yet |
 | Gemini CLI | No native source to confirm the global instruction slot or extension contract |
 | Cursor | User rules live in the app's settings database. File rules are per project |
 | Qoder | The plugin and hook route is known from Ponytail, but there is no source or adapter here yet |
@@ -77,7 +77,7 @@ The default source is the sibling `../gpt-with-taste` checkout, set with `RECIPE
 ## Safety model
 
 - **Dry run first.** Every write shows a per-file unified diff, with secret-looking values redacted. Apply re-checks that the files still match the preview.
-- **Small, marked ownership.** The loader owns whole files only inside its own `recipe-switch` directories. In user files it owns single TOML keys (tagged `# managed by recipe-switch`), single JSON keys, or single array items. All other bytes, including BOM, CRLF, comments and key order, stay as they are.
+- **Small, marked ownership.** The loader owns whole files inside its own `recipe-switch` directories, plus one whole user-slot file: Kimi Code's `SYSTEM.md`. First install takes it only when no such file exists (an existing one blocks unless `--force`); after that the loader rewrites its own marked copy on switch. The file is built on `${base_prompt}`, so Kimi's own prompt stays in place. In other user files it owns single TOML keys (tagged `# managed by recipe-switch`), single JSON keys, single JSON array items or records (matched by id), or single YAML block-list items. All other bytes, including BOM, CRLF, comments and key order, stay as they are.
 - **Hand edits stop the loader.** Each operation records the exact values it wrote. If a managed value has changed since, switch, rollback and uninstall refuse and name the file. `--force` is required to override.
 - **No silent takeover.** An existing non-managed file at a target path, a Codex home managed by gpt-with-taste's `install.mjs`, a Pi gpt-with-taste package, or a DSH `dsh-gpt-with-taste` bundle blocks installation.
 - **Reversible stack.** Operations stack per target in `$RECIPE_SWITCH_HOME/state.json` (default `~/.recipe-switch`). Each one keeps a backup copy of every touched file in `backups/<op>/`. Uninstall restores the original bytes and removes directories the loader created.

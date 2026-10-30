@@ -1,0 +1,7 @@
+{
+  "id": "recipe-switch",
+  "name": "Recipe Switch",
+  "description": "Behavior recipe context, managed by recipe-switch.",
+  "activation": {"onStartup": true},
+  "configSchema": {"type": "object", "additionalProperties": false, "properties": {}}
+}

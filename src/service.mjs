@@ -7,14 +7,13 @@ import {readJson} from './drivers/common.mjs';
 import {writeFile, toPosix, exists} from './fsx.mjs';
 import * as native from './drivers/native.mjs';
 import * as builtin from './drivers/builtin.mjs';
+import * as plugins from './drivers/plugins.mjs';
 
-export const DRIVERS = [native.codex, native.claude, native.kiki, builtin.pi, builtin.dsh, native.omp, native.grok, native.opencode];
+export const DRIVERS = [native.codex, native.claude, native.kiki, builtin.pi, builtin.dsh, native.omp, native.grok, native.opencode,
+  plugins.kimiCode, plugins.hermes, plugins.openclaw];
 
 /** Harnesses detected or requested that the loader deliberately does not write. */
 export const UNCOVERED = [
-  {id: 'kimi-code', name: 'Kimi Code CLI', home: '~/.kimi-code', reason: 'Its only persistent slot, SYSTEM.md, replaces the whole built-in main prompt (tools and environment guidance included); AGENTS.md is a user-owned file. Needs a plugin systemPromptPath target first.'},
-  {id: 'hermes', name: 'Hermes Agent', home: '~/.hermes (HERMES_HOME)', reason: 'SOUL.md is the user\'s identity slot and AGENTS.md is user-owned; a behavior recipe belongs in a plugin with pre_llm_call, which has no adapter yet.'},
-  {id: 'openclaw', name: 'OpenClaw', home: '~/.openclaw', reason: 'Instructions live in the user\'s workspace AGENTS.md/SOUL.md; a before_prompt_build plugin adapter is not built yet.'},
   {id: 'gemini', name: 'Gemini CLI', home: '~/.gemini', reason: 'No native source checkout to confirm the global instruction slot or extension contract; only project-level GEMINI.md is documented by donors.'},
   {id: 'cursor', name: 'Cursor', home: '~/.cursor', reason: 'User rules live in the app settings database; file rules are project-scoped (.cursor/rules). No confirmed global file target.'},
   {id: 'qoder', name: 'Qoder', home: '~/.qoder', reason: 'Plugin manifest and hook route are known from Ponytail but no Qoder source or adapter exists here yet.'},
@@ -83,7 +82,7 @@ export class Service {
         options: driver.options ?? [], key: targetKey(driver.id, target.home)};
       if (target.missing) { Object.assign(row, {present: await exists(target.home), detail: 'no profiles found', live: [], foreign: [], managed: {installed: false, history: [], drift: []}}); rows.push(row); continue; }
       try {
-        const found = await driver.detect(target.home, {gwtRoot: gwt});
+        const found = await driver.detect(target.home, {gwtRoot: gwt, env: this.env});
         Object.assign(row, found, {managed: await status(this.store, driver.id, target.home)});
         if (driver.choices) row.choices = await driver.choices(target.home);
       } catch (error) { Object.assign(row, {present: false, error: error.message, live: [], foreign: [], managed: {installed: false, history: [], drift: []}}); }
@@ -108,7 +107,7 @@ export class Service {
   /** Preview installing or switching to a recipe. */
   async preview({harness, home, recipe: recipeKey, options = {}, recipeOptions, force = false}) {
     const {driver, home: target} = await this.resolveTarget(harness, home), {gwt} = await this.config();
-    const found = await driver.detect(target, {gwtRoot: gwt});
+    const found = await driver.detect(target, {gwtRoot: gwt, env: this.env});
     const managed = await status(this.store, driver.id, target);
     const top = managed.installed ? (await this.store.target(targetKey(driver.id, target))).stack.at(-1) : null;
     const saved = top?.options ?? {};
@@ -118,7 +117,7 @@ export class Service {
     const selection = recipeOptions || sameRecipe ? {...kept, ...recipeOptions} : undefined;
     const recipe = await this.recipe(recipeKey, selection);
     const merged = {...saved, ...options};
-    const {units, notes = [], launch} = await driver.desired(recipe, target, merged);
+    const {units, notes = [], launch} = await driver.desired(recipe, target, merged, {env: this.env});
     const planned = await plan({store: this.store, harness: driver.id, home: target, recipe, desired: units, notes, force});
     const blocking = (found.foreign ?? []).filter(item => item.blocking && !managed.installed);
     if (blocking.length && !force) planned.blocked.push(...blocking.map(item => `${item.what}: ${item.detail}`));

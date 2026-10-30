@@ -64,7 +64,7 @@ function desiredToUnit(desired, current, base) {
   } else if (desired.type === 'tomlKey') {
     unit.beforeLine = current;
     unit.afterLine = desired.afterLine ?? null;
-  } else if (desired.type === 'jsonKey') {
+  } else if (['jsonKey', 'jsonArrayRecord'].includes(desired.type)) {
     unit.beforeValue = current;
     unit.afterValue = desired.afterValue;
   } else {
@@ -81,15 +81,19 @@ async function currentSide(desired) {
     const {readKeyLine} = await import('./vendor/toml-key.mjs');
     return {value: bytes === null ? null : readKeyLine(bytes.toString('utf8'), desired.table, desired.key), bytes};
   }
-  const {fp} = await inspect(desired);
+  const {fp, createdDepth: yamlDepth} = await inspect(desired);
+  if (desired.type === 'yamlArrayItem') return {value: fp === 'present', bytes, createdDepth: yamlDepth};
   const {getKey} = await import('./json-edit.mjs');
-  if (desired.type === 'jsonKey') return {value: fp === ABSENT ? undefined : JSON.parse(fp.slice(6)), bytes, parentMissing: bytes !== null && getKey(bytes.toString('utf8'), desired.pointer.slice(0, -1)) === undefined};
   // Count trailing pointer segments (array included) that do not exist yet.
   let createdDepth = desired.pointer.length;
   if (bytes !== null) {
     const text = bytes.toString('utf8');
     while (createdDepth > 0 && getKey(text, desired.pointer.slice(0, desired.pointer.length - createdDepth + 1)) !== undefined) createdDepth--;
   }
+  if (['jsonKey', 'jsonArrayRecord'].includes(desired.type)) return {
+    value: fp === ABSENT ? undefined : JSON.parse(fp.slice(6)), bytes, createdDepth,
+    parentMissing: bytes === null || getKey(bytes.toString('utf8'), desired.pointer.slice(0, -1)) === undefined,
+  };
   return {value: fp === 'present', bytes, createdDepth};
 }
 
@@ -108,7 +112,8 @@ export async function plan({store, harness, home, recipe, desired, notes = [], f
     const unit = desiredToUnit(want, value, prior?.base);
     if (want.type !== 'file') unit.fileCreated = prior ? prior.base.fileCreated : bytes === null;
     if (want.type === 'jsonKey') unit.parentCreated = prior ? prior.base.parentCreated : Boolean(parentMissing);
-    if (want.type === 'jsonArrayItem') unit.createdDepth = prior ? prior.base.createdDepth : createdDepth;
+    if (['jsonArrayItem', 'jsonArrayRecord', 'yamlArrayItem'].includes(want.type) || want.type === 'jsonKey' && (parentMissing || prior?.base.createdDepth !== undefined))
+      unit.createdDepth = prior ? prior.base.createdDepth : createdDepth;
     if (prior) {
       const live = (await inspect(want)).fp;
       if (live !== fingerprintOf(prior.latest, 'after')) drift.push({path: toPosix(want.path), unit: describe(want), live});
@@ -124,7 +129,7 @@ export async function plan({store, harness, home, recipe, desired, notes = [], f
     const revert = {...latest};
     if (latest.type === 'file') { revert.beforeBytes = latest.afterBytes; revert.afterBytes = base.beforeBytes; }
     else if (latest.type === 'tomlKey') { revert.beforeLine = latest.afterLine; revert.afterLine = base.beforeLine; }
-    else if (latest.type === 'jsonKey') { revert.beforeValue = latest.afterValue; revert.afterValue = base.beforeValue; }
+    else if (['jsonKey', 'jsonArrayRecord'].includes(latest.type)) { revert.beforeValue = latest.afterValue; revert.afterValue = base.beforeValue; }
     else { revert.beforePresent = latest.afterPresent; revert.afterPresent = base.beforePresent; }
     if (fingerprintOf(revert, 'before') !== fingerprintOf(revert, 'after')) units.push(revert);
   }
@@ -143,6 +148,8 @@ export function describe(unit) {
   if (unit.type === 'file') return 'managed file';
   if (unit.type === 'tomlKey') return `TOML key ${[...unit.table, unit.key].join('.')}`;
   if (unit.type === 'jsonKey') return `JSON key ${unit.pointer.join('.')}`;
+  if (unit.type === 'yamlArrayItem') return `YAML ${unit.pointer.join('.')} item ${JSON.stringify(unit.value)}`;
+  if (unit.type === 'jsonArrayRecord') return `JSON ${unit.pointer.join('.')} record ${JSON.stringify(unit.value)}`;
   return `JSON ${unit.pointer.join('.')} item ${JSON.stringify(unit.value)}`;
 }
 
@@ -272,8 +279,12 @@ function collapse(units) {
       // Later (older op) before-values win; keep the newest after-values.
       if (unit.type === 'file') prior.beforeBytes = unit.beforeBytes;
       else if (unit.type === 'tomlKey') { prior.beforeLine = unit.beforeLine; prior.fileCreated = unit.fileCreated; }
-      else if (unit.type === 'jsonKey') { prior.beforeValue = unit.beforeValue; prior.parentCreated = unit.parentCreated; }
+      else if (['jsonKey', 'jsonArrayRecord'].includes(unit.type)) {
+        prior.beforeValue = unit.beforeValue; prior.parentCreated = unit.parentCreated;
+        prior.fileCreated = unit.fileCreated; prior.createdDepth = unit.createdDepth;
+      }
       else { prior.beforePresent = unit.beforePresent; prior.fileCreated = unit.fileCreated; prior.createdDepth = unit.createdDepth; }
+      if (unit.layoutBefore !== undefined) prior.layoutBefore = unit.layoutBefore;
     }
   }
   return [...byId.values()];

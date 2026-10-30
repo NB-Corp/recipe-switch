@@ -140,7 +140,8 @@ test('claude, omp, grok, opencode: managed files only, launch command for Claude
 test('overview lists every driver target and the uncovered harnesses with reasons', async t => {
   const {service} = await sandbox(t);
   const view = await service.overview();
-  assert.deepEqual([...new Set(view.targets.map(r => r.harness))], ['codex', 'claude', 'kiki', 'pi', 'dsh', 'omp', 'grok', 'opencode']);
+  assert.deepEqual([...new Set(view.targets.map(r => r.harness))], ['codex', 'claude', 'kiki', 'pi', 'dsh', 'omp', 'grok', 'opencode', 'kimi-code', 'hermes', 'openclaw']);
+  assert.deepEqual(view.uncovered.map(item => item.id), ['gemini', 'cursor', 'qoder']);
   assert.deepEqual(view.targets.filter(r => r.harness === 'dsh').map(r => r.label), ['profile web', 'profile work']);
   assert.ok(view.uncovered.every(item => item.reason.length > 30));
 });

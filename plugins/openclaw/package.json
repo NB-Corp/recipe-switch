@@ -1,0 +1,8 @@
+{
+  "name": "recipe-switch-openclaw",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Behavior recipe plugin, managed by recipe-switch.",
+  "openclaw": {"extensions": ["./index.mjs"]}
+}
