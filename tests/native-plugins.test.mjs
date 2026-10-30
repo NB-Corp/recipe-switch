@@ -96,6 +96,7 @@ test('Hermes: full Main/Sub middleware covers provider shapes, freezes sessions 
   const {service, file, read} = await sandbox(t);
   service.homes.hermes = file('hermes');
   await put(file('hermes/hermes-agent/hermes_cli/plugins.py'), 'class PluginContext:\n    def register_middleware(self, name, callback):\n        pass\n');
+  await put(file('hermes/hermes-agent/run_agent.py'), 'def request(manager, payload):\n    return manager.run_middleware("llm_request", payload)\n');
   const {planned} = await install(service, 'hermes', 'gpt-with-taste@0.1.0');
   const python = spawnSync('python', ['--version'], {encoding: 'utf8', env: service.env});
   if (python.error?.code === 'ENOENT' || python.status !== 0) return t.skip('python is not available');

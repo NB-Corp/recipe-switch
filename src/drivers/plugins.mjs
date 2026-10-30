@@ -8,6 +8,7 @@ import {MARK} from '../engine.mjs';
 import {inspectYamlList, pluginDisabled} from '../yaml-list.mjs';
 import {fileUnit, jsonItemUnit, readJson, homeDir} from './common.mjs';
 import {snapshot} from './builtin.mjs';
+import {probeHermes as hermesCapabilities} from '../hermes-capabilities.mjs';
 
 const PLUGINS = fileURLToPath(new URL('../../plugins/', import.meta.url));
 const ID = 'recipe-switch';
@@ -61,18 +62,8 @@ export const kimiCode = {
   },
 };
 
-const HERMES_STEERING_ONLY = '此 Hermes 版本不支持 llm_request middleware，只装每轮 steering；主/子代理系统提示需升级 Hermes 后生效';
-export async function hermesCapabilities(home) {
-  // Read source only: importing the host can discover plugins and touch user state.
-  for (const root of [path.join(home, 'hermes-agent'), home]) {
-    const file = path.join(root, 'hermes_cli', 'plugins.py'), bytes = await readFile(file);
-    if (bytes === null) continue;
-    const context = /^class PluginContext\b[^\n]*\n([\s\S]*?)(?=^class |^(?:async )?def |$(?![\s\S]))/m.exec(decode(bytes));
-    const llmRequest = Boolean(context && /^    (?:async )?def register_middleware\s*\(/m.test(context[0]));
-    return {main: llmRequest, sub: llmRequest, userSteer: true, subSteer: true, llmRequest, source: toPosix(file)};
-  }
-  return {main: false, sub: false, userSteer: true, subSteer: true, llmRequest: false, source: null};
-}
+const HERMES_STEERING_ONLY = '未确认此 Hermes 支持 llm_request middleware，只装每轮 steering；主/子代理系统提示暂不可用';
+export {probeHermes as hermesCapabilities} from '../hermes-capabilities.mjs';
 
 export const hermes = {
   id: 'hermes', name: 'Hermes Agent', mechanism: 'Full Main/Sub via session-frozen llm_request middleware + pre_llm_call; one YAML enabled-list item',
@@ -80,22 +71,22 @@ export const hermes = {
   resolveHome: env => userPath(env.HERMES_HOME || (process.platform === 'win32'
     ? path.join(env.LOCALAPPDATA || path.join(homeDir(env), 'AppData', 'Local'), 'hermes')
     : path.join(homeDir(env), '.hermes')), env),
-  async detect(home) {
+  async detect(home, {env = process.env} = {}) {
     const dir = path.join(home, 'plugins', ID), config = await readFile(path.join(home, 'config.yaml'));
     const state = inspectYamlList(decode(config)), disabled = pluginDisabled(state), foreign = await identityInfo(home);
-    const capabilities = await hermesCapabilities(home);
-    if (!capabilities.llmRequest) foreign.push({what: 'Main/Sub unavailable', detail: HERMES_STEERING_ONLY, blocking: false});
+    const capabilities = await hermesCapabilities(home, {env});
+    if (!capabilities.llmRequest) foreign.push({what: 'Main/Sub unavailable', detail: `${HERMES_STEERING_ONLY}。${capabilities.reason}`, blocking: false});
     if (disabled) foreign.push({what: 'Hermes plugin explicitly disabled', detail: 'Remove recipe-switch from plugins.disabled yourself before installing.', blocking: true});
     return {present: await exists(home), capabilities,
       mechanism: capabilities.llmRequest ? this.mechanism : 'Main/Sub unavailable（不可用）; per-turn steering via pre_llm_call only',
       live: liveAt(await snapAt(dir), capabilities.llmRequest ? 'plugins/recipe-switch' : 'plugins/recipe-switch (steering only; Main/Sub unavailable)', state.present && !disabled), foreign};
   },
-  async desired(recipe, home) {
+  async desired(recipe, home, options = {}, {env = process.env} = {}) {
     if (pluginDisabled(inspectYamlList(decode(await readFile(path.join(home, 'config.yaml'))))))
       throw new Error('Hermes plugins.disabled includes recipe-switch; remove that entry yourself before installing.');
     const dir = path.join(home, 'plugins', ID), units = await filesFor('hermes', dir, ['plugin.yaml', '__init__.py'], recipe);
     units.push({type: 'yamlArrayItem', path: path.join(home, 'config.yaml'), pointer: ['plugins', 'enabled'], value: ID, afterPresent: true});
-    const capabilities = await hermesCapabilities(home);
+    const capabilities = await hermesCapabilities(home, {env});
     if (!capabilities.llmRequest) {
       const manifest = units.find(unit => path.basename(unit.path) === 'plugin.yaml');
       manifest.afterBytes = Buffer.from(decode(manifest.afterBytes).replace('provides_middleware:\n  - llm_request\n', ''));
@@ -104,7 +95,7 @@ export const hermes = {
       'Restart Hermes after installing or updating plugin code. Main/Sub are appended in full by llm_request middleware, frozen per session_id on its first request for the running plugin; recipe switches apply to new sessions and preserve existing-session prompt bytes.',
       'Chat system/developer messages, Anthropic system blocks, Responses instructions and Bedrock Converse system blocks are supported. Unknown request shapes or missing session ids are left unchanged.',
       'Hermes codex_app_server, auxiliary calls and max-iteration summary calls bypass llm_request and do not receive this Main/Sub injection.'
-    ] : [HERMES_STEERING_ONLY, 'Main/Sub unavailable: this host has no confirmed llm_request middleware. Upgrade Hermes, then reinstall to enable system prompts. Restart Hermes after installing the steering plugin.'];
+    ] : [HERMES_STEERING_ONLY, `Main/Sub unavailable: ${capabilities.reason}. Confirm Python and upgrade Hermes if needed, then reinstall. Restart Hermes after installing the steering plugin.`];
     notes.push('User/Sub Steer are re-read on each pre_llm_call; delegated children use Sub Steer (platform=subagent). SOUL.md and AGENTS.md are left unchanged.');
     for (const role of ['userSteer', 'subSteer']) if ([...(recipe.texts[role] || '')].length > 10000)
       notes.push(`Hermes ${role} exceeds the default 10,000-character hook-output budget; Hermes may spill it to a file and inject a preview.`);

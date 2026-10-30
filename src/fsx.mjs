@@ -60,48 +60,81 @@ async function checkedBytes(file) {
   return bytes;
 }
 
-/** Restore a displaced inode without replacing a newer file at its old path. */
-export async function restoreDisplaced(file, displaced, boundary) {
-  if (boundary) { await assertBoundary(file, boundary); await assertBoundary(displaced, boundary); }
-  try { await fs.link(displaced, file); }
+/** R20: exclusive publication on filesystems with or without hardlinks. */
+export async function publishExclusive(source, file) {
+  try { await fs.link(source, file); }
+  catch (error) {
+    if (!['ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EPERM', 'EXDEV', 'EINVAL'].includes(error.code)) throw error;
+    await fs.copyFile(source, file, fs.constants.COPYFILE_EXCL);
+  }
+}
+
+/** Restore without replacing a newer destination. Transactions retain the inode. */
+export async function restoreDisplaced(file, displaced, boundary, {retain = false, sourceBoundary = boundary} = {}) {
+  if (boundary) await assertBoundary(file, boundary);
+  if (sourceBoundary) await assertBoundary(displaced, sourceBoundary);
+  try { await publishExclusive(displaced, file); }
   catch (error) {
     if (error.code === 'EEXIST') throw new Error(`Changed during operation; newer file kept at ${toPosix(file)}; displaced version kept at ${toPosix(displaced)}`);
     throw error;
   }
-  await fs.unlink(displaced);
+  if (!retain) await fs.unlink(displaced);
+}
+
+/** Flush a file before publishing its name (journals must precede target moves). */
+async function syncFile(file) {
+  const handle = await fs.open(file, 'r+');
+  try { await handle.sync(); } finally { await handle.close(); }
+}
+async function syncDirectory(dir) {
+  let handle;
+  try { handle = await fs.open(dir, 'r'); await handle.sync(); }
+  catch (error) { if (!['EPERM', 'EACCES', 'EINVAL', 'EISDIR', 'ENOTSUP'].includes(error.code)) throw error; }
+  finally { await handle?.close(); }
 }
 
 /** Conditional writes verify the inode actually displaced, then publish exclusively. */
 export async function writeFile(file, bytes, options = {}) {
-  const {boundary} = options;
+  const {boundary, retainDisplaced = false, onStage = async () => {}} = options;
   if (boundary) await assertBoundary(file, boundary);
   const created = bytes === null ? [] : await mkdirp(path.dirname(file));
-  const temp = `${file}.recipe-switch-${process.pid}-${crypto.randomUUID()}.tmp`;
+  const temp = options.temp ?? `${file}.recipe-switch-${process.pid}-${crypto.randomUUID()}.tmp`;
   const displaced = options.displaced ?? `${file}.recipe-switch-${crypto.randomUUID()}.displaced`;
-  let ownTemp = false, moved = false;
+  let ownTemp = false, moved = false, published = false;
   try {
     if (boundary) await assertBoundary(temp, boundary);
-    if (bytes !== null) { await fs.writeFile(temp, bytes, {flag: 'wx'}); ownTemp = true; }
+    if (bytes !== null) {
+      await fs.writeFile(temp, bytes, {flag: 'wx'}); ownTemp = true;
+      if (options.durable) await syncFile(temp);
+    }
     if (boundary) await assertBoundary(file, boundary);
     if ('expected' in options) {
       if (!equalBytes(await checkedBytes(file), options.expected))
         throw new Error(`Changed during operation; stopped before writing ${toPosix(file)}`);
       if (boundary) await assertBoundary(displaced, boundary);
+      await onStage('displacing'); // temp/displaced paths are durable before rename-away.
       try { await fs.rename(file, displaced); moved = true; }
       catch (error) { if (error.code !== 'ENOENT') throw error; }
       const actual = moved ? await checkedBytes(displaced) : null;
       if (!equalBytes(actual, options.expected))
         throw new Error(`Changed during operation; displaced version differs from preview: ${toPosix(file)}`);
-      // link is an exclusive publication: a file created after rename-away wins.
-      if (bytes !== null) await fs.link(temp, file);
-      if (moved) { await fs.unlink(displaced); moved = false; }
+      await onStage('publishing');
+      if (bytes !== null) await publishExclusive(temp, file);
+      published = true;
+      await onStage('published');
+      // R01: retain the actual inode, including later writes through open handles.
+      if (moved && !retainDisplaced) await fs.unlink(displaced);
+      moved = false;
     } else if (bytes === null) await fs.unlink(file).catch(error => { if (error.code !== 'ENOENT') throw error; });
     else await fs.rename(temp, file);
+    if (options.durable) await syncDirectory(path.dirname(file));
   } catch (error) {
     if (moved) {
-      try { await restoreDisplaced(file, displaced, boundary); moved = false; }
-      catch (recovery) { throw new Error(`${error.message}\n${recovery.message}`); }
-    }
+      try {
+        await restoreDisplaced(file, displaced, boundary, {retain: retainDisplaced}); moved = false;
+        await onStage('restored');
+      } catch (recovery) { throw new Error(`${error.message}\n${recovery.message}`); }
+    } else if (!published) await onStage('untouched');
     for (const dir of [...created].reverse()) await rmdirIfEmpty(dir);
     throw error;
   } finally {

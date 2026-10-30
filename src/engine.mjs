@@ -24,6 +24,84 @@ function deserialize(unit) {
   return out;
 }
 
+function transactionPaths(file, id, i, backup) {
+  const prefix = `${file}.recipe-switch-${id}-${i}`;
+  return {temp: prefix + '.tmp', displaced: prefix + '.displaced', archive: path.join(backup, `${i}-displaced-${path.basename(file)}`),
+    phase: 'planned', recovery: {temp: prefix + '-undo.tmp', displaced: prefix + '-undo.displaced',
+      archive: path.join(backup, `${i}-compensated-${path.basename(file)}`), phase: 'planned'}};
+}
+async function carrierOf(row, journal) {
+  for (const file of [row.displaced, row.archive]) if (file && await exists(file)) {
+    const boundary = file === row.archive ? journal.backupBoundary : row.boundary;
+    await assertBoundary(file, boundary);
+    return {file, boundary, bytes: await readFile(file)};
+  }
+  return null;
+}
+async function archiveDisplaced(store, journal, row, artifact = row) {
+  if (artifact.external || !artifact.displaced || !await exists(artifact.displaced)) return;
+  await assertBoundary(artifact.displaced, row.boundary);
+  await assertBoundary(artifact.archive, journal.backupBoundary);
+  artifact.phase = 'archiving'; await store.journal(journal);
+  // R01: rename retains the inode. Across volumes it stays beside the target;
+  // copying would lose later writes through a held handle to that inode.
+  if (await exists(artifact.archive)) throw new Error(`Backup destination already exists: ${toPosix(artifact.archive)}`);
+  try { await fs.rename(artifact.displaced, artifact.archive); }
+  catch (error) { if (error.code !== 'EXDEV') throw error; artifact.external = true; }
+  artifact.phase = 'archived'; await store.journal(journal);
+}
+async function retainedIndex(journal) {
+  const file = path.join(journal.backup, 'index.json'), bytes = await readFile(file);
+  const index = bytes === null ? journal.files.map(row => ({path: toPosix(row.path), copy: null})) : JSON.parse(bytes.toString('utf8'));
+  for (const row of journal.files) {
+    const entry = index.find(entry => entry.path === toPosix(row.path));
+    entry.replacedVersions = [];
+    for (const artifact of [row, row.recovery]) {
+      const saved = artifact.external ? artifact.displaced : artifact.archive;
+      if (saved && await exists(saved)) entry.replacedVersions.push(toPosix(saved));
+    }
+  }
+  await assertBoundary(file, journal.backupBoundary);
+  await writeFile(file, Buffer.from(JSON.stringify(index, null, 2) + '\n'), {durable: true});
+}
+async function cleanTemp(row, artifact, expected, journal) {
+  if (!artifact.temp || !await exists(artifact.temp)) return;
+  const prefix = `${row.path}.recipe-switch-${journal.id}-`;
+  await assertBoundary(artifact.temp, row.boundary);
+  if (!artifact.temp.startsWith(prefix) || !artifact.temp.endsWith('.tmp') || !equalBytes(await readFile(artifact.temp), expected))
+    throw new Error(`Transaction temp changed; kept at ${toPosix(artifact.temp)}`);
+  await fs.unlink(artifact.temp);
+}
+async function compensate(store, journal, row) {
+  await assertBoundary(row.path, row.boundary);
+  if (['planned', 'untouched', 'restored'].includes(row.phase) || ['restored', 'archived'].includes(row.recovery.phase)) return;
+  const undo = row.recovery, carrier = await carrierOf(row, journal);
+  const before = 'before' in undo ? dec(undo.before) : carrier?.bytes ?? dec(row.before);
+  const current = await readFile(row.path), after = dec(row.after);
+  if (equalBytes(current, before)) return;
+  const movedDuringUndo = await exists(undo.displaced);
+  if (current === null && (carrier || movedDuringUndo)) {
+    undo.before = enc(before); undo.phase = 'publishing'; await store.journal(journal);
+    if (before !== null) {
+      let source = carrier?.file;
+      if (!source) {
+        if (!await exists(undo.temp)) throw new Error(`Recovery temp missing: ${toPosix(undo.temp)}`);
+        source = undo.temp;
+      }
+      await restoreDisplaced(row.path, source, row.boundary, {retain: true, sourceBoundary: carrier?.boundary ?? row.boundary});
+    }
+    undo.phase = 'restored'; await store.journal(journal);
+    return;
+  }
+  if (!equalBytes(current, after)) throw new Error(`Recovery needs a manual decision for ${toPosix(row.path)}; user edits kept. Backup: ${journal.backup}${carrier ? `; displaced version: ${toPosix(carrier.file)}` : ''}`);
+  // R21: persist compensation's own paths and payload before it moves the target.
+  await cleanTemp(row, undo, before, journal); // retry an interrupted preparation, using only its registered temp.
+  undo.before = enc(before); undo.phase = 'prepared'; await store.journal(journal);
+  await writeFile(row.path, before, {expected: after, boundary: row.boundary, temp: undo.temp, displaced: undo.displaced,
+    retainDisplaced: true, durable: true, onStage: async phase => { undo.phase = phase; await store.journal(journal); }});
+  undo.phase = 'restored'; await store.journal(journal);
+}
+
 export class Store {
   constructor(home = stateHome()) {
     this.home = path.resolve(home); this.file = path.join(this.home, 'state.json');
@@ -36,37 +114,39 @@ export class Store {
     if (value.schema !== 1) throw new Error(`Unsupported state schema in ${this.file}`);
     return value;
   }
-  async recover(written) {
+  async journal(value) { await writeFile(this.pending, Buffer.from(JSON.stringify(value) + '\n'), {durable: true}); }
+  async recover() {
     const bytes = await readFile(this.pending);
     if (bytes === null) return;
     const journal = JSON.parse(bytes.toString('utf8'));
-    // A crash after state rename is already committed; otherwise compensate.
-    if (!equalBytes(await readFile(this.file), dec(journal.stateAfter))) {
-      for (const row of [...journal.files].reverse()) {
-        await assertBoundary(row.path, row.boundary);
-        const displaced = row.displaced ? await readFile(row.displaced) : null;
-        if (written && !written.has(row.path) && displaced === null) continue;
-        const current = await readFile(row.path), before = displaced ?? dec(row.before), after = dec(row.after);
-        if (displaced !== null && current === null) {
-          await restoreDisplaced(row.path, row.displaced, row.boundary);
-          continue;
-        }
-        if (!equalBytes(current, before)) {
-          if (!equalBytes(current, after)) throw new Error(`Recovery needs a manual decision for ${toPosix(row.path)}; user edits kept. Backup: ${journal.backup}${displaced === null ? '' : `; displaced version: ${toPosix(row.displaced)}`}`);
-          await writeFile(row.path, before, {expected: after, boundary: row.boundary});
-        }
-        if (displaced !== null) await fs.unlink(row.displaced);
+    // Upgrade legacy pending records before compensation can create any new path.
+    if (!journal.id) {
+      journal.id = crypto.randomUUID();
+      if (!path.isAbsolute(journal.backup)) journal.backup = path.join(this.home, 'backups', `recovered-${journal.id}`);
+      await fs.mkdir(journal.backup, {recursive: true});
+      journal.backupBoundary = await captureBoundary(journal.backup);
+      for (const [i, row] of journal.files.entries()) {
+        const paths = transactionPaths(row.path, journal.id, i, journal.backup);
+        Object.assign(row, {...paths, displaced: row.displaced ?? paths.displaced, phase: 'unknown'});
       }
-      for (const dir of [...journal.missingDirs].reverse()) await rmdirIfEmpty(dir);
-    } else {
-      // Committed cleanup is replayed before discarding the only recovery record.
-      for (const dir of journal.cleanupDirs ?? []) await rmdirIfEmpty(dir);
+      await this.journal(journal);
     }
-    await writeFile(this.pending, null);
+    const committed = equalBytes(await readFile(this.file), dec(journal.stateAfter));
+    if (!committed) for (const row of [...journal.files].reverse()) await compensate(this, journal, row);
+    // Retain displaced inodes on both commit and compensation. Never unlink them.
+    for (const row of journal.files) {
+      await archiveDisplaced(this, journal, row);
+      if (row.recovery) await archiveDisplaced(this, journal, row, row.recovery);
+      await cleanTemp(row, row, dec(row.after), journal);
+      if (row.recovery) await cleanTemp(row, row.recovery, dec(row.recovery.before), journal);
+    }
+    await retainedIndex(journal);
+    for (const dir of committed ? journal.cleanupDirs ?? [] : [...journal.missingDirs].reverse()) await rmdirIfEmpty(dir);
+    await writeFile(this.pending, null, {durable: true});
   }
   async transaction(fn) { return withLock(this.home, async () => { await this.recover(); return fn(await this.readState()); }); }
   async load() { return this.transaction(state => state); }
-  async save(state) { await writeFile(this.file, stateBytes(state)); }
+  async save(state) { await writeFile(this.file, stateBytes(state), {durable: true}); }
   async target(key) { return (await this.load()).targets[key] ?? null; }
   async update(fn) { return this.transaction(async state => { const result = await fn(state); await this.save(state); return result; }); }
 }
@@ -219,32 +299,36 @@ async function missingDirs(rows) {
   return [...dirs].sort((a, b) => a.length - b.length);
 }
 async function commitFiles(store, rows, state, backupDir, beforeSave, cleanupDirs = []) {
-  const dirs = await missingDirs(rows), created = [];
-  const files = rows.map(row => ({path: row.path, boundary: row.boundary, before: enc(row.before), after: enc(row.after),
-    displaced: `${row.path}.recipe-switch-${crypto.randomUUID()}.displaced`}));
-  const journal = {backup: backupDir, stateAfter: enc(stateBytes(state)), missingDirs: dirs,
+  const dirs = await missingDirs(rows), created = [], id = crypto.randomUUID();
+  const files = rows.filter(row => !equalBytes(row.before, row.after)).map((row, i) => ({path: row.path, boundary: row.boundary,
+    before: enc(row.before), after: enc(row.after), ...transactionPaths(row.path, id, i, backupDir)}));
+  const replacedVersions = files.filter(row => row.before !== null).map(row => ({path: toPosix(row.path), saved: toPosix(row.archive)}));
+  if (replacedVersions.length) (state.replacedVersions ??= []).push({backup: backupDir, files: replacedVersions});
+  const journal = {id, backup: backupDir, backupBoundary: await captureBoundary(backupDir), stateAfter: enc(stateBytes(state)), missingDirs: dirs,
     cleanupDirs: [...new Set(cleanupDirs)].sort((a, b) => b.length - a.length), files};
-  await writeFile(store.pending, Buffer.from(JSON.stringify(journal) + '\n'));
-  const written = new Set();
+  await store.journal(journal);
   try {
-    for (const row of rows) if (!equalBytes(row.before, row.after)) {
-      created.push(...await writeFile(row.path, row.after, {expected: row.before, boundary: row.boundary,
-        displaced: files.find(file => file.path === row.path).displaced}));
-      written.add(row.path);
+    for (const row of files) {
+      created.push(...await writeFile(row.path, dec(row.after), {expected: dec(row.before), boundary: row.boundary,
+        temp: row.temp, displaced: row.displaced, retainDisplaced: true, durable: true,
+        onStage: async phase => { row.phase = phase; await store.journal(journal); }}));
     }
-    if (beforeSave) {
-      beforeSave(created);
-      journal.stateAfter = enc(stateBytes(state));
-      await writeFile(store.pending, Buffer.from(JSON.stringify(journal) + '\n'));
+    for (const row of files) await archiveDisplaced(store, journal, row);
+    for (const version of replacedVersions) {
+      const row = files.find(row => toPosix(row.path) === version.path);
+      version.saved = toPosix(row.external ? row.displaced : row.archive);
     }
+    await retainedIndex(journal);
+    if (beforeSave) beforeSave(created, replacedVersions);
+    journal.stateAfter = enc(stateBytes(state)); await store.journal(journal);
     await store.save(state);
   } catch (error) {
-    try { await store.recover(written); }
+    try { await store.recover(); }
     catch (recovery) { throw new Error(`${error.message}\nRecovery pending: ${recovery.message}`); }
     throw new Error(`${error.message}\nWritten files reverted; backup kept at ${backupDir}`);
   }
   await store.recover();
-  return created;
+  return replacedVersions;
 }
 
 export async function applyPlan(store, planned) {
@@ -262,8 +346,10 @@ export async function applyPlan(store, planned) {
     const op = {id: opId, kind: planned.kind, at: new Date().toISOString(), recipe: planned.recipe, options: planned.options,
       backup: backupDir, forced: planned.force || undefined, units: units.map(serialize)};
     target.stack.push(op);
-    await commitFiles(store, rows, state, backupDir, created => { op.createdDirs = created.map(toPosix); }, knownDirs);
-    return {changed: true, op: opId, backup: backupDir, message: `${planned.kind === 'switch' ? 'Switched' : 'Installed'} ${planned.recipe?.key ?? ''}`};
+    const replacedVersions = await commitFiles(store, rows, state, backupDir, (created, replaced) => {
+      op.createdDirs = created.map(toPosix); op.replacedVersions = replaced;
+    }, knownDirs);
+    return {changed: true, op: opId, backup: backupDir, replacedVersions, message: `${planned.kind === 'switch' ? 'Switched' : 'Installed'} ${planned.recipe?.key ?? ''}`};
   });
 }
 export async function planUndo(store, harness, home, {all = false, force = false} = {}) {
@@ -294,8 +380,8 @@ export async function applyUndo(store, planned) {
     const backupDir = await backup(store, `${new Date().toISOString().replace(/[:.]/g, '-')}-${crypto.randomUUID()}`, rows);
     target.stack.splice(target.stack.length - ops.length);
     if (!target.stack.length) delete state.targets[planned.key];
-    await commitFiles(store, rows, state, backupDir, undefined, ops.flatMap(op => op.createdDirs ?? []));
-    return {changed: true, backup: backupDir, message: planned.kind === 'uninstall' ? 'Uninstalled; original state restored.'
+    const replacedVersions = await commitFiles(store, rows, state, backupDir, undefined, ops.flatMap(op => op.createdDirs ?? []));
+    return {changed: true, backup: backupDir, replacedVersions, message: planned.kind === 'uninstall' ? 'Uninstalled; original state restored.'
       : planned.restores ? `Rolled back to ${planned.restores.key}` : 'Rolled back; original state restored.'};
   });
 }

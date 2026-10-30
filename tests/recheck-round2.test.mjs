@@ -195,14 +195,17 @@ for (const supported of [false, true]) test(`R19: read-only host capability prob
   const source = path.join(home, 'hermes-agent', 'hermes_cli', 'plugins.py');
   await put(source, 'raise RuntimeError("host source must never execute")\nclass PluginContext:\n    def register_hook(self, name, callback):\n        pass\n' +
     (supported ? '\n    def register_middleware(self, name, callback):\n        pass\n' : '\n# register_middleware is not a host method\n'));
-  const caps = await hermesCapabilities(home); assert.equal(caps.llmRequest, supported);
+  if (supported) await put(path.join(home, 'hermes-agent', 'run_agent.py'), 'def request(manager, payload):\n    return manager.run_middleware("llm_request", payload)\n');
+  const caps = await hermesCapabilities(home);
+  if (caps.reason?.includes('Python unavailable')) return t.skip(caps.reason);
+  assert.equal(caps.llmRequest, supported);
   const {planned} = await install(b.service, 'hermes', recipe.key);
   const row = (await b.service.overview()).targets.find(row => row.harness === 'hermes');
   assert.equal(row.capabilities.main, supported); assert.equal(row.capabilities.sub, supported);
   if (supported) { assert.match(planned.notes.join('\n'), /appended in full/); assert.match(await fs.readFile(path.join(home, 'plugins/recipe-switch/plugin.yaml'), 'utf8'), /provides_middleware/); }
   else {
     assert.match(row.mechanism, /Main\/Sub unavailable/);
-    assert.match(planned.notes.join('\n'), /此 Hermes 版本不支持 llm_request middleware，只装每轮 steering；主\/子代理系统提示需升级 Hermes 后生效/);
+    assert.match(planned.notes.join('\n'), /只装每轮 steering；主\/子代理系统提示暂不可用/);
     assert.doesNotMatch(await fs.readFile(path.join(home, 'plugins/recipe-switch/plugin.yaml'), 'utf8'), /provides_middleware/);
   }
   const python = String.raw`import importlib.util,sys

@@ -124,6 +124,7 @@ export async function main(argv = process.argv.slice(2), service = new Service()
     if (planned.blocked.length) { process.exitCode = 2; return planned; }
     const result = await service.apply(planned.id);
     console.log(`\n${result.message}${result.backup ? `\nBackup: ${result.backup}` : ''}`);
+    for (const version of result.replacedVersions ?? []) console.log(`被替换的版本保存在 ${version.saved}`);
     return result;
   }
   if (['rollback', 'uninstall'].includes(command)) {
@@ -135,6 +136,7 @@ export async function main(argv = process.argv.slice(2), service = new Service()
     if (planned.blocked.length) { process.exitCode = 2; return planned; }
     const result = await service.applyUndo(planned.id);
     console.log(`\n${result.message}\nBackup: ${result.backup}`);
+    for (const version of result.replacedVersions ?? []) console.log(`被替换的版本保存在 ${version.saved}`);
     return result;
   }
   if (command === 'history') {
