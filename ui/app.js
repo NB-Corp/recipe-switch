@@ -5,7 +5,7 @@ const state = {overview: null, recipes: null, config: null, open: new Set(), scr
 // ---------------------------------------------------------------- i18n
 const STRINGS = {
   zh: {
-    tagline: '给 AI 编程工具换一套系统提示词', navTools: '工具', navRecipes: '配方', navSources: '来源',
+    tagline: '一键切换 AI 编程工具的整套工作方式', navTools: '工具', navRecipes: '配方', navSources: '来源',
     installed: '已装', notInstalled: '未装', notFound: '未检测到', drift: '有手改', blocked: '需处理',
     noRecipe: '使用工具自带的提示词', since: '自', detail: '详情', home: '位置', writes: '写入方式', steer: '每轮提醒',
     others: '其他配置', install: '装上配方', switchTo: '换配方', options: '调整选项', rollback: '撤回上一步', uninstall: '还原',
@@ -29,7 +29,7 @@ const STRINGS = {
     optional: '可选，默认全部生效', help: '使用说明', refresh: '刷新', changedOptions: '选项已改，未写入', liveOther: '非本工具写入',
   },
   en: {
-    tagline: 'Swap the system prompt of your AI coding tools', navTools: 'Tools', navRecipes: 'Recipes', navSources: 'Sources',
+    tagline: 'Switch how your AI coding tools think and work', navTools: 'Tools', navRecipes: 'Recipes', navSources: 'Sources',
     installed: 'On', notInstalled: 'Off', notFound: 'Not found', drift: 'Edited', blocked: 'Needs attention',
     noRecipe: 'Using the tool\'s own prompt', since: 'since', detail: 'Details', home: 'Home', writes: 'Writes', steer: 'Reminders',
     others: 'Other config', install: 'Install a recipe', switchTo: 'Switch recipe', options: 'Options', rollback: 'Undo last change', uninstall: 'Restore',

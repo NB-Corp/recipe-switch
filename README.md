@@ -1,94 +1,256 @@
 # recipe-switch
 
-Install, switch and roll back behavior recipes across coding harnesses, from a CLI or a local web page.
+**Switch how your AI coding tools think and work.**  
+*One click to install, switch, and roll back prompts, subagents, and per-turn reminders — with diff preview and byte-exact recovery.*
 
-A recipe is a set of six behavior texts: Main, Sub, Independent, and the User, Sub and Agent Steer reminders. The loader puts a recipe into each harness through that harness's native entry point. Every change is previewed as a diff, backed up, and reversible. Permissions stay unchanged by default; the OpenClaw UI's explicit `Grant recipe-switch conversation access` opt-in is the exception. The loader never edits model, provider, credentials, MCP or role settings, or overrides an existing permission denial.
+**English** · [简体中文](README.zh-CN.md) · [Documentation](https://nb-corp.github.io/recipe-switch/) · [中文文档](https://nb-corp.github.io/recipe-switch/zh/)
 
-Requires Node.js 22 or newer. No npm packages.
+---
 
-## Quick start
+If you use tools like `cc-switch` to swap API providers across your AI coding agents, **recipe-switch** does the same for how those agents behave.
+
+Normally, changing how your coding assistants work means hunting down different files, plugins, and config keys across every tool on your machine — `config.toml` in Codex, launch flags and hook plugins in Claude Code, `SYSTEM.md` in Kimi Code, extensions in Pi, or Cordis bundles in DeepSeek Harness. And a real working style is more than a single system prompt: it includes instructions for main agents, subagents, and independent workers, plus short per-turn reminders (steering) that keep the model on track when a user replies or a subagent reports back.
+
+We call that complete bundle of working instructions a **recipe**.
+
+**recipe-switch** is a zero-dependency local CLI and web panel (`127.0.0.1`) that installs, switches, customizes, and rolls back behavior recipes across **11 AI coding harnesses**. Every write shows a unified diff first, backs up your files, refuses to overwrite your manual edits silently, and restores your original setup byte-for-byte whenever you want out.
+
+Requires **Node.js ≥ 22**. Zero npm dependencies.
+
+![Targets overview](docs/screenshots/01-overview.png)
+
+---
+
+## Why recipe-switch?
+
+- **Whole working styles, not just one prompt.** A recipe packages up to six coordinated texts: **Main**, **Subagent**, and **Independent** system prompts, plus **User**, **Subagent**, and **Result** per-turn steering reminders.
+- **Customizable with checkboxes.** Recipes can expose toggleable options (`--with` / `--without`) that include or exclude prompt files, prepend or append reminders, or patch specific Markdown sections on the fly.
+- **Diff preview before every write.** Every CLI command and UI action runs a dry-run diff first. Secrets (`Authorization`, `api_key`, `token`, `cookie`, `Bearer`) are redacted in the display while integrity checks compare exact bytes.
+- **Hand-edit protection.** Installed files and config keys carry a `managed by recipe-switch` marker and a recorded fingerprint. If you edit a managed file by hand, `recipe-switch` stops and warns you instead of clobbering your work. Confirming an override (`--force` or **Overwrite anyway (backed up)** in the UI) backs up your hand-edited version first.
+- **Byte-exact rollback and original backups.** Undo the latest switch (`rollback`), strip everything back to how your tool looked before (`uninstall`), or inspect and restore pre-install original snapshots (`originals` / `restore-original`).
+- **Leaves your models and credentials alone.** `recipe-switch` never edits your model selection, API provider, login credentials, MCP servers, or role definitions. Permissions stay untouched by default (OpenClaw's conversation-access hook key is only written if you explicitly check the opt-in box in the UI).
+
+![Diff preview before writing](docs/screenshots/03-diff-preview.png)
+![Hand edit blocks a switch until you decide](docs/screenshots/13-blocked.png)
+
+---
+
+## Quick Start
+
+### 1. Try the sandbox demo first (touches nothing in your real `~`)
+
+Want to click around the UI and test installs, option toggles, hand-edit blocks, and rollbacks without touching your real coding tools? Run the sandbox demo:
+
+```sh
+node scripts/demo.mjs --reset
+```
+
+This creates fake harness homes under `.tmp/demo/` (with sample configs for Codex, Claude Code, Kiki, Pi, DSH profiles, OMP, Grok, OpenCode, Kimi Code, Hermes, and OpenClaw) and opens the local web panel at `http://127.0.0.1:4517/`.
+
+### 2. Run against your real tools
+
+Check which coding harnesses are detected on your machine and what recipes are available:
 
 ```sh
 node bin/recipe-switch.mjs status
 node bin/recipe-switch.mjs recipes
-node bin/recipe-switch.mjs install pi gpt-with-taste@0.1.0          # dry run: prints the diff
-node bin/recipe-switch.mjs install pi gpt-with-taste@0.1.0 --yes    # apply
-node bin/recipe-switch.mjs ui                                       # http://127.0.0.1:4517/
 ```
 
-To try everything without touching your real homes, run `node scripts/demo.mjs --reset`. It creates fake harness homes under `.tmp/demo/` and opens the UI against them.
+Preview installing a recipe (for example, [GPT with Taste](https://github.com/NB-Corp/gpt-with-taste) — *"Better judgment. Better taste. Less ceremony."*):
 
-![Targets overview](docs/screenshots/01-overview.png)
+```sh
+# Dry run: prints the per-file unified diff without writing anything
+node bin/recipe-switch.mjs install pi gpt-with-taste@0.1.0
 
-Before anything is written, the preview shows each file the change touches. A hand edit blocks the apply:
+# Apply the change after reviewing the diff
+node bin/recipe-switch.mjs install pi gpt-with-taste@0.1.0 --yes
+```
 
-![Diff preview](docs/screenshots/03-diff-preview.png)
-![Hand edit blocks a switch](docs/screenshots/13-blocked.png)
+Or launch the local portrait web UI on `127.0.0.1`:
 
-## Commands
+```sh
+node bin/recipe-switch.mjs ui
+```
 
-| Command | What it does |
-| --- | --- |
-| `status [--json]` | Each detected harness and target, the recipe the loader installed, other active instructions, hand-edit drift, blocking installers, and the harnesses not covered |
-| `recipes [--json]` | Recipes from the configured sources |
-| `sources [add\|remove <path>] [--gwt <dir>]` | Manage recipe sources and the gpt-with-taste checkout used for adapters |
-| `install <harness> <recipe>` | Preview, or apply with `--yes`. On a managed target it becomes a switch |
-| `switch <harness> <recipe>` | Same as install; reads better when a recipe is already active |
-| `rollback <harness>` | Undo the latest install or switch: back to the previous recipe, or to the original state |
-| `uninstall <harness>` | Undo every operation and restore the original files |
-| `history <harness>` | Operations with their backup directories |
-| `ui [--port N] [--no-open]` | Local web UI |
+---
 
-Common flags: `--home DIR` picks one target (required for DSH when several profiles exist), `--yes` applies, `--force` overrides the hand-edit and foreign-install guards. Harness options: `--models a,b` (Kiki), `--root-role main|independent` (DSH), `--providers p,q` and `--model-pattern REGEX` (Pi). A switch reuses the previous options unless you pass new ones.
+## Supported Harnesses & Write Points
 
-## Harnesses and write points
+`recipe-switch` adapts each recipe to the native extension or instruction mechanism of each tool. For tools with built-in or native plugins (Pi, DSH, Kimi Code, Hermes, OpenClaw), the plugin runtime is installed once and subsequent switches only rewrite its `recipe.json` snapshot (plus Kimi Code's `SYSTEM.md` wrapper when Main changes).
 
-| Harness | Home (override) | What the loader writes | Steer |
-| --- | --- | --- | --- |
-| OpenAI Codex | `CODEX_HOME`, `~/.codex` | `prompts/recipe-switch/{main,sub}.md` plus one line, `model_instructions_file = "…" # managed by recipe-switch`, in `config.toml` | None from the loader; gpt-with-taste's own `--hooks` plugin covers it |
-| Claude Code | `CLAUDE_CONFIG_DIR`, `~/.claude` | `recipe-switch/main.md` and `recipe-switch/plugin/` (the gpt-with-taste plugin). Settings are not edited; the loader prints the `claude --append-system-prompt-file … --plugin-dir …` launch command | User, Sub, Agent through plugin hooks |
-| Kiki | `KIKI_HOME`, `~/.kiki` | Recipe package in `recipe-switch/packages/<id>/` plus `recipe = "<package>" # managed by recipe-switch` on each chosen `[models."<alias>"]` | Native Recipe steering |
-| Pi | `PI_CODING_AGENT_DIR`, `~/.pi/agent` | Built-in extension `extensions/recipe-switch/`. Switching rewrites only its `recipe.json`, which the extension re-reads on each request | User, Sub, completed results |
-| DeepSeek Harness | `DSH_HOME`, `~/.dsh`; one target per profile | Built-in bundle `dsh-recipe-switch` under `profiles/<p>/node_modules/` and `profiles/<p>/.recipe-switch/`, one `dependencies` entry and one `dsh.profile.bundles` item in the profile `package.json`. Switching rewrites only `recipe.json`, which is re-read before each step | User, coordinator, subagent reports |
-| Oh My Pi | `OMP_CODING_AGENT_DIR`, `~/.omp/agent` | `extensions/recipe-switch/` (gpt-with-taste OMP adapter) | Through the adapter (GPT models) |
-| Grok Build | `GROK_HOME`, `~/.grok` | `rules/recipe-switch.md`; other rules keep loading | None: Grok hooks cannot add context |
-| OpenCode | `OPENCODE_CONFIG_DIR`, `$XDG_CONFIG_HOME/opencode` | `recipe-switch/main.md` plus one item in the `instructions` array of `opencode.json` | None yet |
-| Kimi Code CLI | `KIMI_CODE_HOME`, `~/.kimi-code` | Marked `SYSTEM.md` with `${base_prompt}` followed by Main; `plugins/managed/recipe-switch/{kimi.plugin.json,steer.mjs,recipe.json}` plus one object in `plugins/installed.json`. When Main is enabled, a non-managed `SYSTEM.md` blocks installation; with Main off it stays untouched. Restart after installation or Main changes; explicit agent profiles can override `SYSTEM.md` | User Steer re-read on each `UserPromptSubmit`; subagent profiles are unchanged |
-| Hermes Agent | `HERMES_HOME`; Windows `%LOCALAPPDATA%/hermes`, otherwise `~/.hermes` | `plugins/recipe-switch/{plugin.yaml,__init__.py,recipe.json}` and one block-list item in `config.yaml` → `plugins.enabled`. Restart after plugin install/update. Before installation, the loader reads `<home>/hermes-agent/hermes_cli/plugins.py` or, if that file is unavailable, `<home>/hermes_cli/plugins.py`, as source only; it never imports Hermes. If neither file is available or the selected source lacks `PluginContext.register_middleware`, it installs steering only; Main/Sub remain unavailable until Hermes is upgraded and recipe-switch is reinstalled. With middleware capability, `llm_request` appends full Main/Sub to Chat system/developer messages, Anthropic/Bedrock system blocks or Responses instructions. Each session's first request freezes its text in the running plugin; switches affect new sessions. Native `codex_app_server`, auxiliary and max-iteration summary calls bypass this middleware. Flow-style YAML/anchors at the edited keys block installation | User/Sub Steer re-read at `pre_llm_call`; delegated children use Sub |
-| OpenClaw | `OPENCLAW_STATE_DIR`, otherwise `<OPENCLAW_HOME or OS home>/.openclaw`; config override `OPENCLAW_CONFIG_PATH` | `extensions/recipe-switch/{package.json,openclaw.plugin.json,index.mjs,recipe.json}`; enables `plugins.entries.recipe-switch.enabled` and an item in an existing `plugins.allow`. It writes `.hooks.allowConversationAccess=true` only for an existing true permission or the explicit UI grant option. When `allowConversationAccess` is missing and the grant option is unchecked, permission stays unset; the preview notes the prerequisite and that the hook is inactive until you enable `plugins.entries.recipe-switch.hooks.allowConversationAccess=true`. The UI's `Grant recipe-switch conversation access` option is unchecked by default; selecting it explicitly authorizes that write, and uninstall restores its original state. The CLI has no grant flag; CLI users must set the permission themselves. An explicit `false` for it or `allowPromptInjection`, a disabled plugin system or a deny entry must be changed manually before installation; `--force` does not override them. Config must be strict JSON; JSON5-only syntax blocks installation. Restart Gateway after install; later switches take effect on the next prompt build. `AGENTS.md`/`SOUL.md` stay unchanged | Main/User Steer, or Sub/Sub Steer for subagent session keys |
+| Harness | ID | Home (`--home` or env override) | What `recipe-switch` writes | Per-turn Reminders (Steer) |
+| --- | --- | --- | --- | --- |
+| **OpenAI Codex** | `codex` | `CODEX_HOME`, `~/.codex` | `prompts/recipe-switch/{main,sub,recipe.json}` and one tagged key `model_instructions_file = "…" # managed by recipe-switch` in `config.toml` | None from `recipe-switch` (`gpt-with-taste`'s own `--hooks` plugin covers steering) |
+| **Claude Code** | `claude` | `CLAUDE_CONFIG_DIR`, `~/.claude` | `recipe-switch/{main.md,independent.md,recipe.json}` and `recipe-switch/plugin/`. User `settings.json` is never edited; prints the `claude --append-system-prompt-file … --plugin-dir …` launch command | User, Sub, and Agent Steer via bundled plugin hooks |
+| **Kiki** | `kiki` | `KIKI_HOME`, `~/.kiki` | Recipe package in `recipe-switch/packages/<id>/` and `recipe = "<package>" # managed by recipe-switch` under each selected `[models."<alias>"]` in `config.toml` (requires `--models`) | Native Kiki Recipe steering (Main, Sub, Independent, Agent, Task) |
+| **Pi** | `pi` | `PI_CODING_AGENT_DIR`, `~/.pi/agent` | Built-in extension in `extensions/recipe-switch/`. Switching rewrites only `recipe.json`, re-read on the next request (`/reload` or new session after first install) | User, Sub, and completed-result Steer via extension |
+| **DeepSeek Harness (DSH)** | `dsh` | `DSH_HOME`, `~/.dsh` (one target per profile under `profiles/<p>/`) | Built-in Cordis bundle `dsh-recipe-switch` under `profiles/<p>/.recipe-switch/` and `profiles/<p>/node_modules/`, plus one `dependencies` key and one `dsh.profile.bundles` item in profile `package.json` | User, coordinator, and subagent-report Steer at `agent/pre-step` |
+| **Oh My Pi (OMP)** | `omp` | `OMP_CODING_AGENT_DIR`, `~/.omp/agent` | Extension directory `extensions/recipe-switch/` (`gpt-with-taste` OMP adapter) plus `recipe.json` | User, Sub, and completed Task Steer through the adapter (GPT models by default) |
+| **Grok Build** | `grok` | `GROK_HOME`, `~/.grok` | Global rule file `rules/recipe-switch.md` with an HTML marker header; existing rule files keep loading alongside it | None (Grok hooks cannot inject model context) |
+| **OpenCode** | `opencode` | `OPENCODE_CONFIG_DIR`, `$XDG_CONFIG_HOME/opencode` (`~/.config/opencode`) | `recipe-switch/{main.md,recipe.json}` and one path entry in the `instructions` array of `opencode.json` (plain JSON required) | None yet |
+| **Kimi Code CLI** | `kimi-code` | `KIMI_CODE_HOME`, `~/.kimi-code` | Marked `SYSTEM.md` (`${base_prompt}` + Main), `plugins/managed/recipe-switch/{kimi.plugin.json,steer.mjs,recipe.json}`, and one record in `plugins/installed.json`. A non-managed `SYSTEM.md` blocks install when Main is enabled | User Steer re-read on each `UserPromptSubmit`; subagent profiles stay unchanged |
+| **Hermes Agent** | `hermes` | `HERMES_HOME`; `%LOCALAPPDATA%/hermes` on Windows, `~/.hermes` elsewhere | `plugins/recipe-switch/{plugin.yaml,__init__.py,recipe.json}` and one block-list item under `plugins.enabled` in `config.yaml`. Checks `<home>/hermes-agent/hermes_cli/plugins.py` (or `<home>/hermes_cli/plugins.py`) as source without importing Hermes | User Steer for main turns and Sub Steer for delegated children at `pre_llm_call` |
+| **OpenClaw** | `openclaw` | `OPENCLAW_STATE_DIR`, `<OPENCLAW_HOME or ~>/.openclaw`; config at `OPENCLAW_CONFIG_PATH` or `openclaw.json` | `extensions/recipe-switch/{package.json,openclaw.plugin.json,index.mjs,recipe.json}`, sets `plugins.entries.recipe-switch.enabled = true`, and adds `recipe-switch` to an existing `plugins.allow` in strict JSON | Main + User Steer for regular sessions; Sub + Sub Steer for `subagent:<id>` or `agent:<agent>:subagent:<id>` session keys |
 
-The Pi and DSH plugins in `plugins/` are adapted from the gpt-with-taste runtimes, with the text source changed to the loader's snapshot. That lets one installed plugin carry any recipe.
+> **Hermes notes:** When the local Hermes source supports `PluginContext.register_middleware`, `llm_request` middleware appends full Main/Sub prompts to Chat `system`/`developer` messages, Anthropic `system` blocks, Responses `instructions`, and Bedrock Converse `system` blocks (frozen per `session_id` on its first request so mid-conversation switches only affect new sessions). Native `codex_app_server`, auxiliary calls, and max-iteration summary calls bypass `llm_request`. On older Hermes versions without middleware support, `recipe-switch` installs per-turn steering only and notes that Main/Sub require upgrading Hermes and reinstalling.
+>
+> **OpenClaw notes:** OpenClaw requires `plugins.entries.recipe-switch.hooks.allowConversationAccess = true` for non-bundled plugins. By default, `recipe-switch` leaves permissions unset and prints a reminder. In the local UI, you can explicitly check **Grant recipe-switch conversation access** to let `recipe-switch` write that key (and restore it on uninstall); CLI users set the key manually. An existing `false` on `allowConversationAccess` or `allowPromptInjection`, `plugins.enabled = false`, or a `plugins.deny` entry is never overridden, even with `--force`.
 
-### Not covered
+### Not Covered Yet
 
-| Harness | Reason |
-| --- | --- |
-| Gemini CLI | No native source to confirm the global instruction slot or extension contract |
-| Cursor | User rules live in the app's settings database. File rules are per project |
-| Qoder | The plugin and hook route is known from Ponytail, but there is no source or adapter here yet |
+`recipe-switch` deliberately skips tools where a safe, file-backed global entry point is not yet confirmed:
 
-## Recipe sources
+| Tool | Detected Path | Why it is left untouched |
+| --- | --- | --- |
+| **Gemini CLI** | `~/.gemini` | No native source checkout to confirm the global instruction slot or extension contract; only project-level `GEMINI.md` is documented by donors. |
+| **Cursor** | `~/.cursor` | Global user rules live inside the application settings database, and file rules (`.cursor/rules`) are per-project rather than global. |
+| **Qoder** | `~/.qoder` | The plugin manifest and hook route are known from Ponytail, but no Qoder source checkout or adapter is bundled here yet. |
 
-The default source is the sibling `../gpt-with-taste` checkout, set with `RECIPE_SWITCH_GWT` or `sources --gwt`. Its `recipe/manifest.json` and committed `dist/<harness>/` files are used directly. Add more sources with `sources add <path>`:
+---
 
-- A gpt-with-taste style repository (`recipe/manifest.json` plus `dist/`).
-- A Kiki Recipe `.toml` file, or a directory of them, such as `../kimi/recipes`. The six texts are read from its `[prompts]`, `[prompts.main]` and `[prompts.independent]` slots. Harness files are rendered by gpt-with-taste's own `adapters/<harness>/build.mjs`, and Kiki receives the original package files.
+## Safety Model
 
-Options are listed and applied in their TOML declaration order, including numeric ids. Unknown `--with` / `--without` ids are ignored with a warning. Explicit `main = "off"` and `independent = "off"` stay disabled: Kiki and the built-in snapshot plugins preserve them; an adapter or entry point that cannot represent the disabled role asks you to choose another recipe instead of filling it with common text.
+Editing local agent configurations should never feel risky. `recipe-switch` enforces seven layers of protection:
 
-## Safety model
+1. **Preview before every write.** Every mutating CLI command defaults to dry-run mode and prints a unified diff (including line-ending and trailing-newline changes). You must pass `--yes` (or click **Write changes** in the UI) to touch the disk. If any file changes between preview and apply, the write aborts.
+2. **Automatic per-operation backups.** Before writing, `recipe-switch` copies the exact pre-write bytes of every affected file into `~/.recipe-switch/backups/<op-id>/` with a SHA-256 `index.json`, and retains displaced file versions so nothing is ever lost.
+3. **Minimal, marked ownership.** Outside its own `recipe-switch/` directories (and Kimi Code's marked `SYSTEM.md` wrapper), `recipe-switch` only claims individual TOML lines (`# managed by recipe-switch`), single JSON keys or array items/records, or a single YAML block-list item. Unrelated keys, comments, and formatting spans in your config files are preserved.
+4. **Hand-edit drift detection.** Before switching, rolling back, or uninstalling, `recipe-switch` compares the live file against the fingerprint recorded when it was written. If you edited a managed prompt or removed a marker comment, the operation blocks. You can move your edits aside, or explicitly confirm an override (`--force` / **Overwrite anyway (backed up)**), which backs up your hand-edited version before replacing it.
+5. **Byte-exact rollback and uninstall.** `rollback` steps back one operation to your previous recipe (or original state). `uninstall` unwinds the entire stack for that harness, restores the original source spans (including whitespace and escaped JSON strings), and removes directories created by the loader if they are empty.
+6. **Original state backup & restore ("原始备份 / 恢复到装之前").** Alongside the step-by-step operation stack, `recipe-switch` preserves the pre-install original state of each target so you can inspect the baseline or jump straight back to your pre-`recipe-switch` setup at any time via `originals` / `restore-original` or the UI's **Original backup / Restore to before install** control.
+7. **Strict scope & localhost isolation.** Canonical path checks ensure no symlink or Windows junction can redirect writes outside the target harness home. The web UI binds strictly to `127.0.0.1`, requires a per-process random token (`x-recipe-switch-token`), and rejects cross-origin requests.
 
-- **Dry run first.** Every write shows a per-file unified diff, including line-ending and final-newline changes. Authorization, API-key, cookie and other secret-looking values are redacted for display. Apply compares the real, unredacted bytes with the preview.
-- **Small, marked ownership.** The loader owns whole files inside its own `recipe-switch` directories, plus Kimi Code's marked `SYSTEM.md` wrapper around `${base_prompt}`. An existing non-managed file blocks installation unless explicitly forced. A Codex home managed by gpt-with-taste's installer, a Pi gpt-with-taste package, or a DSH `dsh-gpt-with-taste` bundle also blocks takeover. In other user files it owns tagged TOML lines, single JSON keys or array items/records, or marked YAML block-list items. Uninstall restores original source spans, including escaped strings and empty-container whitespace, while keeping unrelated edits.
-- **Hand edits stop the loader.** Changes to owned content, including TOML/YAML marker comments, block switch, rollback and uninstall. `--force` backs up the live user version before replacing or retiring it. Files changed after a preview require another preview, even with force.
-- **Confined paths.** Destination paths are checked against the chosen home using canonical paths before planning and writing; a junction cannot redirect an implicit target outside it. An explicit `OPENCLAW_CONFIG_PATH` has its own boundary. Package text and option-patch files must resolve inside their package.
-- **Reversible transactions.** Operations stack per target in `$RECIPE_SWITCH_HOME/state.json` (default `~/.recipe-switch`), with exact pre-write copies in `backups/<op>/`. Store transactions serialize across server requests and CLI processes. All units are preflighted before mutation; write or state-save failure compensates completed writes. An interrupted operation leaves `pending.json`, recovered on the next normal command. If recovery finds a newer user edit, it keeps that edit and reports the file and backup for a manual decision. Uninstall restores original bytes and removes created directories.
-- **Local only.** The UI listens on `127.0.0.1`, requires a per-process token, and rejects foreign `Origin` and unexpected `Host` headers.
+---
 
-## Tests
+## CLI Usage
+
+Run `node bin/recipe-switch.mjs --help` (or `recipe-switch --help` when linked):
+
+```text
+recipe-switch — install, switch and roll back behavior recipes across coding harnesses
+
+  recipe-switch status [--json]                      Detected harnesses, active recipes, drift
+  recipe-switch recipes [--json]                     Recipes from configured sources
+  recipe-switch sources [add|remove <path>] [--gwt <gpt-with-taste checkout>]
+  recipe-switch install  <harness> <recipe> [--home DIR] [options] [--yes]
+  recipe-switch switch   <harness> <recipe> [--home DIR] [options] [--yes]
+  recipe-switch rollback <harness> [--home DIR] [--yes]   Undo the latest install/switch
+  recipe-switch uninstall <harness> [--home DIR] [--yes]  Undo everything; restore the original state
+  recipe-switch history  <harness> [--home DIR]
+  recipe-switch ui [--port 4517] [--no-open]          Local web UI on 127.0.0.1
+
+Without --yes, write commands only print the diff (dry run).
+--force overrides hand-edit and foreign-install guards; it is never implied.
+Recipe options: --with a,b --without c   (ids from "recipes"; others keep the installed or default choice)
+Harness options: --models a,b (kiki)  --root-role main|independent (dsh)
+                 --providers p,q --model-pattern REGEX (pi)
+Harnesses: codex, claude, kiki, pi, dsh, omp, grok, opencode, kimi-code, hermes, openclaw
+State: RECIPE_SWITCH_HOME (default ~/.recipe-switch)
+```
+
+Original-state backup commands (paired with the UI's **原始备份 / 恢复到装之前**):
+
+```sh
+recipe-switch originals <harness> [--home DIR]
+recipe-switch restore-original <harness> [--home DIR] [--yes]
+```
+
+### Common CLI Examples
+
+```sh
+# Bind a recipe to specific Kiki model aliases
+node bin/recipe-switch.mjs install kiki gpt-with-taste@0.1.0 --models axon/gpt-6.1-sol,deepseek-v4-flash --yes
+
+# Install into a specific DeepSeek Harness profile with root role set to independent
+node bin/recipe-switch.mjs install dsh gpt-with-taste@0.1.0 --home ~/.dsh/profiles/work --root-role independent --yes
+
+# Install into Pi for OpenAI models only, with a recipe option enabled
+node bin/recipe-switch.mjs install pi calm-reviewer@0.2.1 --providers openai --model-pattern "^gpt-" --with security --without cite --yes
+
+# Undo the last switch, or restore the harness completely
+node bin/recipe-switch.mjs rollback pi --yes
+node bin/recipe-switch.mjs uninstall pi --yes
+```
+
+---
+
+## Recipe Options
+
+Recipes are not static blobs. A `recipe.toml` package can define boolean checkbox options that tailor the six behavior texts before they are installed:
+
+- **Conditional items (`when` / `unless`)**: Include or skip a file or inline text snippet inside any prompt slot depending on whether an option is enabled or disabled.
+- **Whole-slot `prepend` / `append`**: Add a file or text rule to the start or end of `common.system`, `main.steering`, `independent.system`, `anchor`, or `steering_sources.<source>`.
+- **Markdown section `[[options.<id>.patch]]`**: Target a specific Markdown heading (at any `#` level, ignoring headings inside code fences) and `prepend`, `append`, insert `before` or `after`, `replace`, or `remove` that section.
+
+In the UI, toggling an option updates the file diff live. In the CLI, pass `--with id1,id2` and `--without id3`; any option you omit keeps your previously installed choice for that recipe (or the recipe's default on first install).
+
+![Recipes and option switches](docs/screenshots/15-recipes.png)
+
+---
+
+## Writing & Connecting Your Own Recipes
+
+By default, `recipe-switch` reads from a sibling `../gpt-with-taste` checkout (configurable via `RECIPE_SWITCH_GWT` or `recipe-switch sources --gwt <dir>`). You can add any number of custom recipe directories or `recipe.toml` files:
+
+```sh
+node bin/recipe-switch.mjs sources add ~/my-recipes
+```
+
+`recipe-switch` accepts two source formats:
+1. **A `recipe.toml` package (or a directory containing `recipe.toml` packages)**: The standard format shared with Kiki Recipes. `recipe-switch` evaluates your options into the six behavior texts (`main`, `sub`, `independent`, `userSteer`, `subSteer`, `agentSteer`), passes them through `gpt-with-taste`'s harness adapters (`adapters/<harness>/build.mjs`) for adapter-backed tools, and installs the materialized package directly for Kiki.
+2. **An author repository (`recipe/recipe.toml` or `recipe/manifest.json` + `dist/<harness>/`)**: Like [gpt-with-taste](https://github.com/NB-Corp/gpt-with-taste), where default option builds can be read straight from committed `dist/` directories.
+
+### Minimal `recipe.toml` Example
+
+See [`examples/options-sample/`](examples/options-sample/recipe.toml) for a complete working example tested against materialized outputs:
+
+```toml
+schema_version = 1
+id = "calm-reviewer"
+name = "Calm Reviewer"
+version = "0.2.1"
+description = "Review-first behavior with optional security pass."
+
+[options.security]
+name = "Security pass"
+description = "Adds a security checklist before Tone."
+default = false
+
+[[options.security.patch]]
+slot = "main.system"
+section = "Tone"
+action = "before"
+content = { file = "security.md" }
+
+[options.cite]
+name = "Cite lines"
+description = "Reminds the agent to cite file:line each turn."
+default = true
+append.main.steering = { text = "Cite file:line for every finding." }
+
+[prompts]
+system = { file = "sub.md" }
+steering = { text = "Stay inside the assigned slice." }
+
+[prompts.main]
+system = { file = "main.md" }
+steering = { text = "Keep the review goal in view." }
+```
+
+For full authoring rules, slot inheritance (`[prompts]`, `[prompts.main]`, `[prompts.independent]`, `"off"` roles), and per-harness details, see the [Documentation Site](https://nb-corp.github.io/recipe-switch/) (source in [`docs/`](docs/index.md)).
+
+---
+
+## Running Tests
 
 ```sh
 npm test
 ```
 
-Tests run only against fake homes under `.tmp/test/`. The DSH test loads the installed bundle through the real DSH profile discovery and Cordis Loader when `DSH_PACKAGE_ROOT` points to an installed `@deepseek-ai/dsh`, or when the default nvm path exists. Otherwise it is skipped.
+All tests execute against isolated temporary directories under `.tmp/test/` and never touch your real user homes.
+
+---
+
+## License
+
+[MIT](LICENSE)

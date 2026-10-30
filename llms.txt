@@ -1,0 +1,82 @@
+# recipe-switch
+
+> Switch how your AI coding tools think and work. `recipe-switch` is a zero-dependency Node.js (≥ 22) CLI and localhost web panel (`127.0.0.1`) that installs, switches, customizes, and rolls back behavior recipes — Main, Subagent, and Independent system prompts plus User, Subagent, and Result per-turn steering reminders — across 11 AI coding harnesses, with unified diff previews, automatic backups, hand-edit drift protection, and byte-exact rollback.
+
+- Repository: https://github.com/NB-Corp/recipe-switch
+- Default Recipe Source: https://github.com/NB-Corp/gpt-with-taste
+- Documentation (English): https://nb-corp.github.io/recipe-switch/
+- Documentation (简体中文): https://nb-corp.github.io/recipe-switch/zh/
+- License: MIT
+
+## What a Recipe Contains
+
+A behavior recipe (`recipe.toml` or an author repo like `gpt-with-taste`) defines up to six coordinated instruction texts:
+- `main`: System prompt for the primary interactive coding agent.
+- `sub`: System prompt for delegated subagents.
+- `independent`: System prompt for standalone/autonomous tasks.
+- `userSteer`: Per-turn reminder injected on user turns.
+- `subSteer`: Per-turn reminder injected on subagent turns.
+- `agentSteer`: Per-turn reminder injected when a subagent or task returns results.
+
+Recipes can also declare boolean checkbox options (`[options.<id>]`) that customize prompts via `when`/`unless` item filtering, whole-slot `prepend`/`append`, or Markdown section-level `[[options.<id>.patch]]` (`prepend`, `append`, `before`, `after`, `replace`, `remove`).
+
+## Supported AI Coding Harnesses (11)
+
+- `codex` (**OpenAI Codex**, `~/.codex` / `CODEX_HOME`): Writes `prompts/recipe-switch/{main,sub,recipe.json}` and sets `model_instructions_file = "…" # managed by recipe-switch` in `config.toml`.
+- `claude` (**Claude Code**, `~/.claude` / `CLAUDE_CONFIG_DIR`): Writes `recipe-switch/{main.md,independent.md,recipe.json}` and `recipe-switch/plugin/`. Never edits `settings.json`; prints the `claude --append-system-prompt-file … --plugin-dir …` launch command.
+- `kiki` (**Kiki**, `~/.kiki` / `KIKI_HOME`): Writes materialized package under `recipe-switch/packages/<id>/` and sets `recipe = "<package>" # managed by recipe-switch` on selected `[models."<alias>"]` entries in `config.toml` (requires `--models`).
+- `pi` (**Pi**, `~/.pi/agent` / `PI_CODING_AGENT_DIR`): Installs built-in extension in `extensions/recipe-switch/`; switching rewrites `recipe.json` (hot-reloaded per request; optional `--providers` and `--model-pattern`).
+- `dsh` (**DeepSeek Harness**, `~/.dsh` / `DSH_HOME`, one target per profile under `profiles/<p>/`): Installs Cordis bundle `dsh-recipe-switch` in `.recipe-switch/` and `node_modules/` and registers it in profile `package.json` (optional `--root-role main|independent`).
+- `omp` (**Oh My Pi**, `~/.omp/agent` / `OMP_CODING_AGENT_DIR`): Installs `gpt-with-taste` OMP adapter under `extensions/recipe-switch/`.
+- `grok` (**Grok Build**, `~/.grok` / `GROK_HOME`): Writes marked global rule file `rules/recipe-switch.md` alongside existing rules.
+- `opencode` (**OpenCode**, `$XDG_CONFIG_HOME/opencode` / `OPENCODE_CONFIG_DIR`): Writes `recipe-switch/main.md` and adds its path to `instructions` in plain-JSON `opencode.json`.
+- `kimi-code` (**Kimi Code CLI**, `~/.kimi-code` / `KIMI_CODE_HOME`): Writes marked `SYSTEM.md` (`${base_prompt}` + Main), installs `plugins/managed/recipe-switch/{kimi.plugin.json,steer.mjs,recipe.json}`, and registers it in `plugins/installed.json`.
+- `hermes` (**Hermes Agent**, `%LOCALAPPDATA%/hermes` on Windows or `~/.hermes` / `HERMES_HOME`): Installs `plugins/recipe-switch/{plugin.yaml,__init__.py,recipe.json}` and enables it in `config.yaml` (`plugins.enabled`). Uses `llm_request` middleware for session-frozen Main/Sub prompts when supported by local Hermes source (`PluginContext.register_middleware`), plus `pre_llm_call` for per-turn steering. (`codex_app_server`, auxiliary, and max-iteration summary calls bypass `llm_request`.)
+- `openclaw` (**OpenClaw**, `~/.openclaw` / `OPENCLAW_STATE_DIR` / `OPENCLAW_CONFIG_PATH`): Installs `extensions/recipe-switch/` (`before_prompt_build` plugin) and enables it in strict-JSON `openclaw.json`. Leaves `allowConversationAccess` untouched unless already true or explicitly granted via the UI opt-in checkbox.
+
+*(Detected but intentionally uncovered: **Gemini CLI** `~/.gemini`, **Cursor** `~/.cursor`, and **Qoder** `~/.qoder`.)*
+
+## Key CLI Commands
+
+```sh
+# Inspect harnesses, active recipes, and hand-edit drift
+node bin/recipe-switch.mjs status [--json]
+
+# List available recipes and checkbox options
+node bin/recipe-switch.mjs recipes [--json]
+
+# Manage recipe sources and gpt-with-taste adapter checkout
+node bin/recipe-switch.mjs sources [add|remove <path>] [--gwt <dir>]
+
+# Preview (dry run) or apply (--yes) an install or switch
+node bin/recipe-switch.mjs install <harness> <recipe> [--home DIR] [--with a,b] [--without c] [--yes]
+node bin/recipe-switch.mjs switch  <harness> <recipe> [--home DIR] [--with a,b] [--without c] [--yes]
+
+# Roll back the latest operation or uninstall all operations
+node bin/recipe-switch.mjs rollback  <harness> [--home DIR] [--yes]
+node bin/recipe-switch.mjs uninstall <harness> [--home DIR] [--yes]
+
+# Inspect operation history or restore pre-install original state backups
+node bin/recipe-switch.mjs history          <harness> [--home DIR]
+node bin/recipe-switch.mjs originals        <harness> [--home DIR]
+node bin/recipe-switch.mjs restore-original <harness> [--home DIR] [--yes]
+
+# Start the localhost web panel on 127.0.0.1:4517 (or run the isolated sandbox demo)
+node bin/recipe-switch.mjs ui [--port 4517] [--no-open]
+node scripts/demo.mjs --reset
+```
+
+## Documentation Links
+
+- [Home (EN)](https://nb-corp.github.io/recipe-switch/): Overview, value proposition, and supported tools table.
+- [Installation & Quick Start (EN)](https://nb-corp.github.io/recipe-switch/getting-started.html): Sandbox demo, CLI workflow, and local Web UI guide.
+- [Supported Harnesses & Write Points (EN)](https://nb-corp.github.io/recipe-switch/harnesses.html): Per-tool file paths, config keys, steering hooks, and edge cases.
+- [Safety, Backups & Rollback (EN)](https://nb-corp.github.io/recipe-switch/safety.html): Diff preview, secret redaction, managed units, drift detection, and original backups.
+- [Recipes & Options Format (EN)](https://nb-corp.github.io/recipe-switch/recipes.html): Authoring `recipe.toml`, slot inheritance, and option patches.
+- [FAQ (EN)](https://nb-corp.github.io/recipe-switch/faq.html): Common questions on Claude Code, Codex, Kimi Code, Hermes, OpenClaw, and rollbacks.
+- [中文文档首页 (ZH)](https://nb-corp.github.io/recipe-switch/zh/): 中文总览与快速导航。
+- [安装与快速开始 (ZH)](https://nb-corp.github.io/recipe-switch/zh/getting-started.html): 沙盒试玩、CLI 与 Web 面板指南。
+- [各工具写入点与限制说明 (ZH)](https://nb-corp.github.io/recipe-switch/zh/harnesses.html): 11 款工具的详细写入机制。
+- [安全模型、备份与回滚 (ZH)](https://nb-corp.github.io/recipe-switch/zh/safety.html): 预览、备份、手改拦截与恢复到装之前。
+- [配方与选项格式 (ZH)](https://nb-corp.github.io/recipe-switch/zh/recipes.html): `recipe.toml` 编写与复选框选项语法。
+- [常见问题 FAQ (ZH)](https://nb-corp.github.io/recipe-switch/zh/faq.html): 常见搜索问题解答。
