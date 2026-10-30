@@ -136,3 +136,10 @@ test('options: validation errors', async () => {
   await assert.rejects(bad('[options.o]\nname = "O"\ndefault = true\nappend.main.steering = { text = "x" }\n[prompts]\nsystem = { file = "a.md" }\n'), /not declared/);
   await assert.rejects(bad('[options.o]\nname = "O"\ndefault = true\nappend.main.bogus = { text = "x" }\n'), /unknown slot/);
 });
+
+test('examples/options-sample: expected.json and materialized packages match the evaluator', async () => {
+  const {execFileSync} = await import('node:child_process');
+  const {fileURLToPath} = await import('node:url');
+  const script = fileURLToPath(new URL('../examples/options-sample/build-expected.mjs', import.meta.url));
+  execFileSync(process.execPath, [script, '--check'], {stdio: 'pipe'});
+});
