@@ -12,9 +12,12 @@ import {Service} from './service.mjs';
 const UI = fileURLToPath(new URL('../ui/', import.meta.url));
 const TYPES = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml'};
 
+function driftView(drift = []) {
+  return drift.map(({path: file, unit, live}) => ({path: file, unit, state: live === 'absent' ? 'missing' : 'edited'}));
+}
 function strip(planned) {
-  const {units, ...rest} = planned;
-  return rest;
+  const {units, drift, ...rest} = planned;
+  return {...rest, drift: driftView(drift)};
 }
 const optionView = option => ({id: option.id, name: option.name, description: option.description, default: option.default, affects: option.affects ?? []});
 function recipeView(recipe) {

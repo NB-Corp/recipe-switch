@@ -110,13 +110,14 @@ test('R04: stale uninstall preflights all files before restoring any; later fail
   assert.equal(await fs.readFile(z, 'utf8'), 'MANAGED Z');
   assert.equal((await b.store.target(planned.key)).stack.length, 1);
   await fs.writeFile(a, 'MANAGED A');
-  const next = await undoPlan(b), rename = fs.rename; let failed = false;
-  fs.rename = async (from, to) => {
+  const next = await undoPlan(b), link = fs.link; let failed = false;
+  fs.link = async (from, to) => {
     if (to === a && !failed) { failed = true; throw new Error('synthetic later write failure'); }
-    return rename(from, to);
+    return link(from, to);
   };
   try { await assert.rejects(applyUndo(b.store, next), /later write failure/); }
-  finally { fs.rename = rename; }
+  finally { fs.link = link; }
+  assert.equal(failed, true, 'failure reached the exclusive publication boundary');
   assert.equal(await fs.readFile(z, 'utf8'), 'MANAGED Z');
   assert.equal(await fs.readFile(a, 'utf8'), 'MANAGED A');
   assert.equal((await b.store.target(next.key)).stack.length, 1);
@@ -160,7 +161,7 @@ test('R08: preview redacts authorization, bearer, API-key and cookie headers; in
   assert.match(redact('Authorization: Bearer abc123\nx-api-key: key-value\nCookie: session=abc'), /\[redacted\]/);
 });
 
-test('R09: OpenClaw explicit conversation denial blocks even force; absent permission is announced and reversible', async t => {
+test('R09: OpenClaw explicit conversation denial blocks even force; absent permission stays unset and is announced', async t => {
   const b = await box(t), file = path.join(b.home, 'openclaw.json');
   const original = '{"plugins":{"entries":{"recipe-switch":{"hooks":{"allowConversationAccess":false}}}}}\n';
   await put(file, original);
@@ -170,8 +171,10 @@ test('R09: OpenClaw explicit conversation denial blocks even force; absent permi
   assert.equal(await fs.readFile(file, 'utf8'), original);
   await fs.writeFile(file, '{}\n');
   const desired = await openclaw.desired(recipe, b.home, {}, {env: {}});
-  assert.match(desired.notes.join('\n'), /Enables.*allowConversationAccess/);
-  await install(b, desired.units); await applyUndo(b.store, await undoPlan(b));
+  assert.match(desired.notes.join('\n'), /prerequisite.*allowConversationAccess/);
+  await install(b, desired.units);
+  assert.equal(JSON.parse(await fs.readFile(file, 'utf8')).plugins.entries['recipe-switch'].hooks?.allowConversationAccess, undefined);
+  await applyUndo(b.store, await undoPlan(b));
   assert.equal(await fs.readFile(file, 'utf8'), '{}\n');
 });
 

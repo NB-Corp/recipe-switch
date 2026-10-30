@@ -41,7 +41,9 @@ export function inspectBytes(unit, bytes) {
   }
   if (unit.type === 'yamlArrayItem') {
     const state = inspectYamlList(decode(bytes), unit.value);
-    return {fp: state.present ? 'line:' + state.item.body : ABSENT, bytes, createdDepth: state.createdDepth};
+    // Legacy schema-1 records can derive exact ownership from their saved layout.
+    const exact = unit.exactSource || unit.layoutAfter !== undefined || unit.afterFingerprint !== undefined || unit.beforeFingerprint !== undefined;
+    return {fp: state.present ? exact ? 'line:' + state.item.body : 'present' : ABSENT, bytes, createdDepth: state.createdDepth};
   }
   if (valueUnit(unit)) {
     if (bytes === null) return {fp: ABSENT, bytes};
@@ -63,6 +65,10 @@ export function fingerprintOf(unit, side) {
     return bytes === null ? ABSENT : 'sha256:' + sha256(bytes);
   }
   if (unit.type === 'tomlKey') return tomlValue(unit[side + 'Line']);
+  if (unit.type === 'yamlArrayItem' && unit.layoutAfter !== undefined) {
+    const state = inspectYamlList((side === 'after' ? unit.layoutAfter : unit.layoutBefore) ?? '', unit.value);
+    return state.present ? 'line:' + state.item.body : ABSENT;
+  }
   if (valueUnit(unit)) return unit[side + 'Value'] === undefined ? ABSENT : 'value:' + JSON.stringify(unit[side + 'Value']);
   return unit[side + 'Present'] ? 'present' : ABSENT;
 }
@@ -86,8 +92,11 @@ export function render(unit, side, current) {
   }
   if (unit.type === 'yamlArrayItem') {
     if (side === 'before' && unit.yamlPatch?.after) {
-      const text = decode(current), at = text.indexOf(unit.yamlPatch.after);
-      if (at >= 0 && text.indexOf(unit.yamlPatch.after, at + 1) < 0)
+      const text = decode(current), at = text.indexOf(unit.yamlPatch.after), state = inspectYamlList(text, unit.value);
+      const hasOtherItems = unit.createdDepth >= 1 && state.items?.some(item => item !== state.item);
+      const hasOtherKeys = unit.createdDepth >= 2 && state.plugin && state.lines.some(line => line.start > state.plugin.start && line.start < state.end &&
+        line.indent === state.indent && line.body.trim() && !line.body.trimStart().startsWith('#') && line !== state.enabled);
+      if (!hasOtherItems && !hasOtherKeys && at >= 0 && text.indexOf(unit.yamlPatch.after, at + 1) < 0)
         return Buffer.from(text.slice(0, at) + unit.yamlPatch.before + text.slice(at + unit.yamlPatch.after.length));
     }
     const text = editYamlList(decode(current), unit.value, unit[side + 'Present'], unit.createdDepth);

@@ -113,5 +113,6 @@ def _steer(platform=None, parent_session_id=None, **kwargs):
 
 
 def register(ctx):
-    ctx.register_middleware("llm_request", _request_middleware())
+    if hasattr(ctx, "register_middleware"):
+        ctx.register_middleware("llm_request", _request_middleware())
     ctx.register_hook("pre_llm_call", _steer)

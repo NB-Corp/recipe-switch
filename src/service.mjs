@@ -117,6 +117,7 @@ export class Service {
     const selection = recipeOptions || sameRecipe ? {...kept, ...recipeOptions} : undefined;
     const recipe = await this.recipe(recipeKey, selection);
     const merged = {...saved, ...options};
+    for (const option of driver.options ?? []) if (option.consent) merged[option.key] = options[option.key] === true;
     if (['codex', 'claude', 'omp', 'grok', 'opencode'].includes(driver.id) && recipe.texts.main === null)
       throw new Error(`${driver.name}: explicit main=off is unsupported by this entry point; choose a recipe with Main enabled.`);
     const {units, notes = [], launch} = await driver.desired(recipe, target, merged, {env: this.env});

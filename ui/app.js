@@ -22,6 +22,8 @@ const STRINGS = {
     saved: '已保存', sourceErrors: '读取失败的来源', stateHome: '状态与备份保存在', noRecipes: '没找到配方。到「来源」里加一个目录。',
     loadFailed: '加载失败', required: '先选好必填项', models: '要绑定的模型', rootRole: '根代理角色',
     providers: '只对这些 provider 生效（逗号分隔，留空为全部）', modelPattern: '只对匹配的模型 id 生效（正则，留空为全部）',
+    conversationGrant: '授予 recipe-switch 插件对话访问权限',
+    conversationGrantHint: 'OpenClaw 对非内置插件要求此项，写在 plugins.entries.recipe-switch.hooks.allowConversationAccess。默认不勾选；卸载时还原。已有 false 需你先手动更改。',
     blockedHint: '你手动改过这些文件。可以先去工具里把改动挪走；或者直接覆盖，写入前会先备份你的版本，完成后显示备份位置。',
     handEdit: '被手动改过', forceBtn: '仍然覆盖（先备份）', forcedTitle: '将覆盖手改', forcedBody: '你的手改版本会先备份，然后被覆盖。',
     optional: '可选，默认全部生效', help: '使用说明', refresh: '刷新', changedOptions: '选项已改，未写入', liveOther: '非本工具写入',
@@ -44,6 +46,8 @@ const STRINGS = {
     saved: 'Saved', sourceErrors: 'Sources that failed to load', stateHome: 'State and backups live in', noRecipes: 'No recipes found. Add a directory under Sources.',
     loadFailed: 'Failed to load', required: 'Fill in the required settings first', models: 'Models to bind', rootRole: 'Root agent role',
     providers: 'Only these providers (comma separated, empty = all)', modelPattern: 'Only model ids matching (regex, empty = all)',
+    conversationGrant: 'Grant recipe-switch conversation access',
+    conversationGrantHint: 'OpenClaw requires this for non-bundled plugins: plugins.entries.recipe-switch.hooks.allowConversationAccess. Off by default; restored on uninstall. Change an existing false manually first.',
     blockedHint: 'You edited these files by hand. Move your edits out first, or overwrite: your version is backed up before anything is written.',
     handEdit: 'Edited by hand', forceBtn: 'Overwrite anyway (backed up)', forcedTitle: 'Overwriting hand edits', forcedBody: 'Your edited version is backed up first, then replaced.',
     optional: 'optional; applies everywhere by default', help: 'Guide', refresh: 'Refresh', changedOptions: 'Options changed, not written', liveOther: 'not written by this tool',
@@ -221,12 +225,19 @@ function pickRecipe(target) {
     foot: sheetFoot(el('button', {class: 'btn', onclick: () => close()}, t('cancel')))});
 }
 
-const toolFieldLabel = key => ({models: t('models'), rootRole: t('rootRole'), providers: t('providers'), modelIdPattern: t('modelPattern')})[key];
+const toolFieldLabel = key => ({models: t('models'), rootRole: t('rootRole'), providers: t('providers'), modelIdPattern: t('modelPattern'), grantConversationAccess: t('conversationGrant')})[key];
 function toolFields(target, saved = {}) {
   const fields = [];
   for (const opt of target.options ?? []) {
     const label = toolFieldLabel(opt.key) ?? opt.label;
-    if (opt.type === 'multi') {
+    if (opt.type === 'boolean') {
+      const box = el('input', {type: 'checkbox', 'aria-label': label, 'data-option': opt.key});
+      box.checked = opt.consent ? false : Boolean(saved[opt.key]);
+      fields.push({node: el('label', {class: 'opt'}, el('span', {class: 'opt-name'}, label),
+        opt.consent ? el('span', {class: 'opt-desc'}, t('conversationGrantHint')) : null,
+        el('span', {class: 'switch'}, box, el('span'))),
+        read: () => ({[opt.key]: box.checked}), valid: () => true});
+    } else if (opt.type === 'multi') {
       const pre = new Set([].concat(saved[opt.key] ?? []));
       const list = el('div', {class: 'opts'}, (target.choices?.models ?? []).map(choice => {
         const box = el('input', {type: 'checkbox', value: choice}); box.checked = pre.has(choice);
@@ -328,7 +339,7 @@ function configure(target, recipe, {recipeOptions} = {}) {
   const apply = el('button', {class: 'btn btn-signal', disabled: true}, t('apply'));
   const cancel = el('button', {class: 'btn'}, t('cancel'));
   const errorLine = el('div', {class: 'foot-error', hidden: true});
-  const needed = (target.options ?? []).some(opt => opt.required);
+  const needed = (target.options ?? []).some(opt => opt.required || opt.consent);
   const toolBox = fields.length ? (needed
     ? el('div', {class: 'field'}, el('span', {class: 'field-label'}, t('toolOptions')), fields.map(f => f.node))
     : el('details', {class: 'more'}, el('summary', {}, t('toolOptions'), el('span', {class: 'group-note'}, t('optional'))), el('div', {class: 'more-body'}, fields.map(f => f.node)))) : null;
@@ -491,22 +502,22 @@ function renderSources() {
 const TOUR = {
   zh: [
     {title: '它做什么', body: '一份配方是一套 AI 编程工具的工作方式：主提示词、子代理提示词，以及每轮的小提醒。recipe-switch 把配方装进你电脑上的 Codex、Claude Code、Kiki、Pi 等工具，随时切换或还原。',
-      list: ['只改提示词相关的文件和一两行配置', '不碰模型、provider、登录和权限设置']},
+      list: ['只改提示词相关的文件和少量配置', '不碰模型、provider 和登录；OpenClaw 对话访问权限只有你主动勾选才会写入']},
     {title: '装一份配方', body: '在「工具」里点开一个工具，选「装上配方」。',
       list: ['挑一份配方', '按需打开或关闭配方选项，下方实时显示每个文件的改动', '确认后才写入，写入前自动备份']},
-    {title: '需要你设置的地方', body: '个别工具要你挑一下作用范围，界面里会直接问：',
-      list: ['Kiki：选要绑定配方的模型（至少一个）', 'DSH：每个 profile 单独装，可选根代理角色', 'Pi：可限定 provider 或模型 id，留空就是全部', 'Claude Code：不改设置，装好后给你一条启动命令']},
+    {title: '需要你设置的地方', body: '个别工具需要你选择作用范围或授权，界面里会直接问：',
+      list: ['Kiki：选要绑定配方的模型（至少一个）', 'DSH：每个 profile 单独装，可选根代理角色', 'Pi：可限定 provider 或模型 id，留空就是全部', 'Claude Code：不改设置，装好后给你一条启动命令', 'OpenClaw：非内置插件需要对话访问权限。默认不写；在工具设置里主动勾选「授予 recipe-switch 插件对话访问权限」才会写入 plugins.entries.recipe-switch.hooks.allowConversationAccess，卸载时还原。已有 false 需你手动更改，强制覆盖也不会替你授权。']},
     {title: '手改与还原', body: '装上的文件带有标记。你手动改过它们时，工具上会显示「有手改」，切换或还原都会停下来让你先处理，不会悄悄覆盖。',
       list: ['撤回上一步：回到上一个配方', '还原：恢复到安装前的原样，逐字节一致', '备份和记录在「来源」页底部显示的目录里']},
     {title: '配方从哪来', body: '「来源」页列出要扫描的目录。gpt-with-taste 是默认来源；任何带 recipe.toml 的目录都能加进来，包括 Kiki 的配方包。'},
   ],
   en: [
     {title: 'What it does', body: 'A recipe is a working style for an AI coding tool: the main prompt, the subagent prompt and short per-turn reminders. recipe-switch installs recipes into the tools on this computer (Codex, Claude Code, Kiki, Pi…), and switches or restores them any time.',
-      list: ['Writes only prompt files and a line or two of config', 'Never touches models, providers, sign-in or permissions']},
+      list: ['Writes prompt files and a few config entries', 'Leaves models, providers and sign-in alone; writes OpenClaw conversation access only when you actively select the grant']},
     {title: 'Install a recipe', body: 'Open a tool under Tools and choose Install a recipe.',
       list: ['Pick a recipe', 'Turn recipe options on or off; the diff below updates live', 'Nothing is written until you confirm; a backup is taken first']},
-    {title: 'Settings you may be asked for', body: 'A few tools need a scope; the panel asks right there:',
-      list: ['Kiki: choose which models get the recipe (at least one)', 'DSH: install per profile, optionally pick the root role', 'Pi: optionally limit to providers or model ids', 'Claude Code: settings stay untouched; you get a launch command']},
+    {title: 'Settings you may be asked for', body: 'A few tools need a scope or permission; the panel asks right there:',
+      list: ['Kiki: choose which models get the recipe (at least one)', 'DSH: install per profile, optionally pick the root role', 'Pi: optionally limit to providers or model ids', 'Claude Code: settings stay untouched; you get a launch command', 'OpenClaw: non-bundled plugins need conversation access. It stays unset by default. Actively select “Grant recipe-switch conversation access” in Tool settings to write plugins.entries.recipe-switch.hooks.allowConversationAccess; uninstall restores it. Change an existing false manually; force never grants it.']},
     {title: 'Hand edits and restore', body: 'Installed files are marked. If you edit one by hand the tool shows Edited, and switching or restoring stops until you decide; nothing is silently overwritten.',
       list: ['Undo last change: back to the previous recipe', 'Restore: byte-for-byte back to before the install', 'Backups and history live in the folder shown under Sources']},
     {title: 'Where recipes come from', body: 'Sources lists the folders to scan. gpt-with-taste is the default; any folder with a recipe.toml works, including Kiki recipe packages.'},

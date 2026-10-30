@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import {readFile, writeFile, rmdirIfEmpty, equalBytes, toPosix, sha256, assertBoundary, captureBoundary, withLock, exists} from './fsx.mjs';
+import {readFile, writeFile, restoreDisplaced, rmdirIfEmpty, equalBytes, toPosix, sha256, assertBoundary, captureBoundary, withLock, exists} from './fsx.mjs';
 import {inspect, inspectBytes, fingerprintOf, render, recordLayout, identity, ABSENT} from './units.mjs';
 import {unifiedDiff} from './diff.mjs';
 
@@ -43,14 +43,24 @@ export class Store {
     // A crash after state rename is already committed; otherwise compensate.
     if (!equalBytes(await readFile(this.file), dec(journal.stateAfter))) {
       for (const row of [...journal.files].reverse()) {
-        if (written && !written.has(row.path)) continue;
         await assertBoundary(row.path, row.boundary);
-        const current = await readFile(row.path), before = dec(row.before), after = dec(row.after);
-        if (equalBytes(current, before)) continue;
-        if (!equalBytes(current, after)) throw new Error(`Recovery needs a manual decision for ${toPosix(row.path)}; user edits kept. Backup: ${journal.backup}`);
-        await writeFile(row.path, before, {expected: after, boundary: row.boundary});
+        const displaced = row.displaced ? await readFile(row.displaced) : null;
+        if (written && !written.has(row.path) && displaced === null) continue;
+        const current = await readFile(row.path), before = displaced ?? dec(row.before), after = dec(row.after);
+        if (displaced !== null && current === null) {
+          await restoreDisplaced(row.path, row.displaced, row.boundary);
+          continue;
+        }
+        if (!equalBytes(current, before)) {
+          if (!equalBytes(current, after)) throw new Error(`Recovery needs a manual decision for ${toPosix(row.path)}; user edits kept. Backup: ${journal.backup}${displaced === null ? '' : `; displaced version: ${toPosix(row.displaced)}`}`);
+          await writeFile(row.path, before, {expected: after, boundary: row.boundary});
+        }
+        if (displaced !== null) await fs.unlink(row.displaced);
       }
       for (const dir of [...journal.missingDirs].reverse()) await rmdirIfEmpty(dir);
+    } else {
+      // Committed cleanup is replayed before discarding the only recovery record.
+      for (const dir of journal.cleanupDirs ?? []) await rmdirIfEmpty(dir);
     }
     await writeFile(this.pending, null);
   }
@@ -208,15 +218,18 @@ async function missingDirs(rows) {
   }
   return [...dirs].sort((a, b) => a.length - b.length);
 }
-async function commitFiles(store, rows, state, backupDir, beforeSave) {
+async function commitFiles(store, rows, state, backupDir, beforeSave, cleanupDirs = []) {
   const dirs = await missingDirs(rows), created = [];
+  const files = rows.map(row => ({path: row.path, boundary: row.boundary, before: enc(row.before), after: enc(row.after),
+    displaced: `${row.path}.recipe-switch-${crypto.randomUUID()}.displaced`}));
   const journal = {backup: backupDir, stateAfter: enc(stateBytes(state)), missingDirs: dirs,
-    files: rows.map(row => ({path: row.path, boundary: row.boundary, before: enc(row.before), after: enc(row.after)}))};
+    cleanupDirs: [...new Set(cleanupDirs)].sort((a, b) => b.length - a.length), files};
   await writeFile(store.pending, Buffer.from(JSON.stringify(journal) + '\n'));
   const written = new Set();
   try {
     for (const row of rows) if (!equalBytes(row.before, row.after)) {
-      created.push(...await writeFile(row.path, row.after, {expected: row.before, boundary: row.boundary}));
+      created.push(...await writeFile(row.path, row.after, {expected: row.before, boundary: row.boundary,
+        displaced: files.find(file => file.path === row.path).displaced}));
       written.add(row.path);
     }
     if (beforeSave) {
@@ -230,7 +243,7 @@ async function commitFiles(store, rows, state, backupDir, beforeSave) {
     catch (recovery) { throw new Error(`${error.message}\nRecovery pending: ${recovery.message}`); }
     throw new Error(`${error.message}\nWritten files reverted; backup kept at ${backupDir}`);
   }
-  await writeFile(store.pending, null);
+  await store.recover();
   return created;
 }
 
@@ -249,17 +262,9 @@ export async function applyPlan(store, planned) {
     const op = {id: opId, kind: planned.kind, at: new Date().toISOString(), recipe: planned.recipe, options: planned.options,
       backup: backupDir, forced: planned.force || undefined, units: units.map(serialize)};
     target.stack.push(op);
-    await commitFiles(store, rows, state, backupDir, created => { op.createdDirs = created.map(toPosix); });
-    await pruneDirs(units, new Set(knownDirs.map(dir => dir.toLowerCase())));
+    await commitFiles(store, rows, state, backupDir, created => { op.createdDirs = created.map(toPosix); }, knownDirs);
     return {changed: true, op: opId, backup: backupDir, message: `${planned.kind === 'switch' ? 'Switched' : 'Installed'} ${planned.recipe?.key ?? ''}`};
   });
-}
-async function pruneDirs(units, known) {
-  for (const unit of units) {
-    if (unit.type !== 'file' || unit.afterBytes !== null) continue;
-    let dir = path.dirname(path.resolve(unit.path));
-    while (known.has(toPosix(dir).toLowerCase()) && await rmdirIfEmpty(dir)) dir = path.dirname(dir);
-  }
 }
 export async function planUndo(store, harness, home, {all = false, force = false} = {}) {
   const key = targetKey(harness, home), target = await store.target(key);
@@ -289,8 +294,7 @@ export async function applyUndo(store, planned) {
     const backupDir = await backup(store, `${new Date().toISOString().replace(/[:.]/g, '-')}-${crypto.randomUUID()}`, rows);
     target.stack.splice(target.stack.length - ops.length);
     if (!target.stack.length) delete state.targets[planned.key];
-    await commitFiles(store, rows, state, backupDir);
-    for (const op of ops) for (const dir of [...(op.createdDirs ?? [])].reverse()) await rmdirIfEmpty(dir);
+    await commitFiles(store, rows, state, backupDir, undefined, ops.flatMap(op => op.createdDirs ?? []));
     return {changed: true, backup: backupDir, message: planned.kind === 'uninstall' ? 'Uninstalled; original state restored.'
       : planned.restores ? `Rolled back to ${planned.restores.key}` : 'Rolled back; original state restored.'};
   });

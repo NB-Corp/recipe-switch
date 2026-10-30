@@ -95,6 +95,7 @@ test('Kimi: foreign SYSTEM and existing plugin id block without changing bytes',
 test('Hermes: full Main/Sub middleware covers provider shapes, freezes sessions and keeps fresh per-turn steer', async t => {
   const {service, file, read} = await sandbox(t);
   service.homes.hermes = file('hermes');
+  await put(file('hermes/hermes-agent/hermes_cli/plugins.py'), 'class PluginContext:\n    def register_middleware(self, name, callback):\n        pass\n');
   const {planned} = await install(service, 'hermes', 'gpt-with-taste@0.1.0');
   const python = spawnSync('python', ['--version'], {encoding: 'utf8', env: service.env});
   if (python.error?.code === 'ENOENT' || python.status !== 0) return t.skip('python is not available');
@@ -110,7 +111,7 @@ test('Hermes: full Main/Sub middleware covers provider shapes, freezes sessions 
 
 test('OpenClaw: dependency-free installed entry injects role-correct hook results and sees switches without reload', async t => {
   const {service, file} = await fixture(t);
-  await install(service, 'openclaw', 'a');
+  await install(service, 'openclaw', 'a', {options: {grantConversationAccess: true}});
   const plugin = (await import(pathToFileURL(file('openclaw/extensions/recipe-switch/index.mjs')).href)).default;
   const hooks = new Map();
   plugin.register({on: (name, fn) => hooks.set(name, fn)});

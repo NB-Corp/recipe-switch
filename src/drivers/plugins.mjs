@@ -61,6 +61,19 @@ export const kimiCode = {
   },
 };
 
+const HERMES_STEERING_ONLY = '此 Hermes 版本不支持 llm_request middleware，只装每轮 steering；主/子代理系统提示需升级 Hermes 后生效';
+export async function hermesCapabilities(home) {
+  // Read source only: importing the host can discover plugins and touch user state.
+  for (const root of [path.join(home, 'hermes-agent'), home]) {
+    const file = path.join(root, 'hermes_cli', 'plugins.py'), bytes = await readFile(file);
+    if (bytes === null) continue;
+    const context = /^class PluginContext\b[^\n]*\n([\s\S]*?)(?=^class |^(?:async )?def |$(?![\s\S]))/m.exec(decode(bytes));
+    const llmRequest = Boolean(context && /^    (?:async )?def register_middleware\s*\(/m.test(context[0]));
+    return {main: llmRequest, sub: llmRequest, userSteer: true, subSteer: true, llmRequest, source: toPosix(file)};
+  }
+  return {main: false, sub: false, userSteer: true, subSteer: true, llmRequest: false, source: null};
+}
+
 export const hermes = {
   id: 'hermes', name: 'Hermes Agent', mechanism: 'Full Main/Sub via session-frozen llm_request middleware + pre_llm_call; one YAML enabled-list item',
   steer: 'User Steer for main turns; Sub Steer for delegated children',
@@ -70,18 +83,29 @@ export const hermes = {
   async detect(home) {
     const dir = path.join(home, 'plugins', ID), config = await readFile(path.join(home, 'config.yaml'));
     const state = inspectYamlList(decode(config)), disabled = pluginDisabled(state), foreign = await identityInfo(home);
+    const capabilities = await hermesCapabilities(home);
+    if (!capabilities.llmRequest) foreign.push({what: 'Main/Sub unavailable', detail: HERMES_STEERING_ONLY, blocking: false});
     if (disabled) foreign.push({what: 'Hermes plugin explicitly disabled', detail: 'Remove recipe-switch from plugins.disabled yourself before installing.', blocking: true});
-    return {present: await exists(home), live: liveAt(await snapAt(dir), 'plugins/recipe-switch', state.present && !disabled), foreign};
+    return {present: await exists(home), capabilities,
+      mechanism: capabilities.llmRequest ? this.mechanism : 'Main/Sub unavailable（不可用）; per-turn steering via pre_llm_call only',
+      live: liveAt(await snapAt(dir), capabilities.llmRequest ? 'plugins/recipe-switch' : 'plugins/recipe-switch (steering only; Main/Sub unavailable)', state.present && !disabled), foreign};
   },
   async desired(recipe, home) {
     if (pluginDisabled(inspectYamlList(decode(await readFile(path.join(home, 'config.yaml'))))))
       throw new Error('Hermes plugins.disabled includes recipe-switch; remove that entry yourself before installing.');
     const dir = path.join(home, 'plugins', ID), units = await filesFor('hermes', dir, ['plugin.yaml', '__init__.py'], recipe);
     units.push({type: 'yamlArrayItem', path: path.join(home, 'config.yaml'), pointer: ['plugins', 'enabled'], value: ID, afterPresent: true});
-    const notes = ['Restart Hermes after installing or updating plugin code. Main/Sub are appended in full by llm_request middleware, frozen per session_id on its first request for the running plugin; recipe switches apply to new sessions and preserve existing-session prompt bytes.',
+    const capabilities = await hermesCapabilities(home);
+    if (!capabilities.llmRequest) {
+      const manifest = units.find(unit => path.basename(unit.path) === 'plugin.yaml');
+      manifest.afterBytes = Buffer.from(decode(manifest.afterBytes).replace('provides_middleware:\n  - llm_request\n', ''));
+    }
+    const notes = capabilities.llmRequest ? [
+      'Restart Hermes after installing or updating plugin code. Main/Sub are appended in full by llm_request middleware, frozen per session_id on its first request for the running plugin; recipe switches apply to new sessions and preserve existing-session prompt bytes.',
       'Chat system/developer messages, Anthropic system blocks, Responses instructions and Bedrock Converse system blocks are supported. Unknown request shapes or missing session ids are left unchanged.',
-      'Hermes codex_app_server, auxiliary calls and max-iteration summary calls bypass llm_request and do not receive this Main/Sub injection.',
-      'Delegated children use Sub and Sub Steer (platform=subagent); SOUL.md and AGENTS.md are left unchanged. User/Sub Steer are re-read on each pre_llm_call.'];
+      'Hermes codex_app_server, auxiliary calls and max-iteration summary calls bypass llm_request and do not receive this Main/Sub injection.'
+    ] : [HERMES_STEERING_ONLY, 'Main/Sub unavailable: this host has no confirmed llm_request middleware. Upgrade Hermes, then reinstall to enable system prompts. Restart Hermes after installing the steering plugin.'];
+    notes.push('User/Sub Steer are re-read on each pre_llm_call; delegated children use Sub Steer (platform=subagent). SOUL.md and AGENTS.md are left unchanged.');
     for (const role of ['userSteer', 'subSteer']) if ([...(recipe.texts[role] || '')].length > 10000)
       notes.push(`Hermes ${role} exceeds the default 10,000-character hook-output budget; Hermes may spill it to a file and inject a preview.`);
     return {units, notes};
@@ -107,21 +131,25 @@ export const openclaw = {
   id: 'openclaw', name: 'OpenClaw', mechanism: 'Native before_prompt_build plugin; strict-JSON enablement keys',
   steer: 'User Steer; Sub and Sub Steer for subagent session keys',
   resolveHome: openclawHome,
+  options: [{key: 'grantConversationAccess', type: 'boolean', consent: true, label: 'Grant recipe-switch conversation access'}],
   async detect(home, {env = process.env} = {}) {
     const dir = path.join(home, 'extensions', ID), {config} = await openclawSettings(home, env);
     const entry = config?.plugins?.entries?.[ID];
     const enabled = entry?.enabled && entry.hooks?.allowConversationAccess && (!config.plugins.allow || config.plugins.allow.includes(ID));
     return {present: await exists(home), live: liveAt(await snapAt(dir), 'extensions/recipe-switch', enabled), foreign: await identityInfo(home)};
   },
-  async desired(recipe, home, _options = {}, {env = process.env} = {}) {
+  async desired(recipe, home, options = {}, {env = process.env} = {}) {
     const dir = path.join(home, 'extensions', ID), {file, config} = await openclawSettings(home, env);
     const units = await filesFor('openclaw', dir, ['package.json', 'openclaw.plugin.json', 'index.mjs'], recipe);
+    const permission = config?.plugins?.entries?.[ID]?.hooks?.allowConversationAccess;
     units.push(keyUnit(file, ['plugins', 'entries', ID, 'enabled'], true));
-    units.push(keyUnit(file, ['plugins', 'entries', ID, 'hooks', 'allowConversationAccess'], true));
+    if (permission === true || options.grantConversationAccess === true)
+      units.push(keyUnit(file, ['plugins', 'entries', ID, 'hooks', 'allowConversationAccess'], true));
     if (config?.plugins?.allow !== undefined) units.push({...jsonItemUnit(file, ['plugins', 'allow'], ID), preserveLayout: true});
     if (env.OPENCLAW_CONFIG_PATH?.trim()) for (const unit of units) if (unit.path === file) unit.boundary = path.dirname(file);
-    return {units, notes: [...(config?.plugins?.entries?.[ID]?.hooks?.allowConversationAccess === undefined
-      ? ['Enables this plugin’s allowConversationAccess hook because it is not set. An explicit false is a manual prerequisite and is never overridden.'] : []),
+    return {units, notes: [...(permission === undefined ? [options.grantConversationAccess === true
+      ? 'You explicitly granted conversation access to recipe-switch; this preview writes plugins.entries.recipe-switch.hooks.allowConversationAccess=true. Uninstall restores its original state.'
+      : 'OpenClaw prerequisite: non-bundled plugins require plugins.entries.recipe-switch.hooks.allowConversationAccess=true. Permission stays unset; enable it yourself or actively select “Grant recipe-switch conversation access” in Tool settings. Until then the hook is inactive.'] : []),
       'Restart the OpenClaw Gateway after installing or changing plugin code. Later recipe switches are re-read on the next before_prompt_build.',
       'Main + User Steer apply to regular sessions. Sub + Sub Steer apply when ctx.sessionKey is subagent:<id> or agent:<agent>:subagent:<id>; absent session keys use Main.',
       `Config: ${toPosix(file)}. Only plugin enablement, conversation-hook access and an existing allowlist are edited; AGENTS.md/SOUL.md stay unchanged.`]};

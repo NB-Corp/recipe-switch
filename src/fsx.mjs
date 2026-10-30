@@ -60,22 +60,48 @@ async function checkedBytes(file) {
   return bytes;
 }
 
-/** Atomic replacement, optionally conditional on the exact verified/backup bytes. */
+/** Restore a displaced inode without replacing a newer file at its old path. */
+export async function restoreDisplaced(file, displaced, boundary) {
+  if (boundary) { await assertBoundary(file, boundary); await assertBoundary(displaced, boundary); }
+  try { await fs.link(displaced, file); }
+  catch (error) {
+    if (error.code === 'EEXIST') throw new Error(`Changed during operation; newer file kept at ${toPosix(file)}; displaced version kept at ${toPosix(displaced)}`);
+    throw error;
+  }
+  await fs.unlink(displaced);
+}
+
+/** Conditional writes verify the inode actually displaced, then publish exclusively. */
 export async function writeFile(file, bytes, options = {}) {
   const {boundary} = options;
   if (boundary) await assertBoundary(file, boundary);
   const created = bytes === null ? [] : await mkdirp(path.dirname(file));
   const temp = `${file}.recipe-switch-${process.pid}-${crypto.randomUUID()}.tmp`;
-  let ownTemp = false;
+  const displaced = options.displaced ?? `${file}.recipe-switch-${crypto.randomUUID()}.displaced`;
+  let ownTemp = false, moved = false;
   try {
     if (boundary) await assertBoundary(temp, boundary);
     if (bytes !== null) { await fs.writeFile(temp, bytes, {flag: 'wx'}); ownTemp = true; }
     if (boundary) await assertBoundary(file, boundary);
-    if ('expected' in options && !equalBytes(await checkedBytes(file), options.expected))
-      throw new Error(`Changed during operation; stopped before writing ${toPosix(file)}`);
-    if (bytes === null) await fs.unlink(file).catch(error => { if (error.code !== 'ENOENT') throw error; });
+    if ('expected' in options) {
+      if (!equalBytes(await checkedBytes(file), options.expected))
+        throw new Error(`Changed during operation; stopped before writing ${toPosix(file)}`);
+      if (boundary) await assertBoundary(displaced, boundary);
+      try { await fs.rename(file, displaced); moved = true; }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+      const actual = moved ? await checkedBytes(displaced) : null;
+      if (!equalBytes(actual, options.expected))
+        throw new Error(`Changed during operation; displaced version differs from preview: ${toPosix(file)}`);
+      // link is an exclusive publication: a file created after rename-away wins.
+      if (bytes !== null) await fs.link(temp, file);
+      if (moved) { await fs.unlink(displaced); moved = false; }
+    } else if (bytes === null) await fs.unlink(file).catch(error => { if (error.code !== 'ENOENT') throw error; });
     else await fs.rename(temp, file);
   } catch (error) {
+    if (moved) {
+      try { await restoreDisplaced(file, displaced, boundary); moved = false; }
+      catch (recovery) { throw new Error(`${error.message}\n${recovery.message}`); }
+    }
     for (const dir of [...created].reverse()) await rmdirIfEmpty(dir);
     throw error;
   } finally {
@@ -95,13 +121,17 @@ export async function withLock(home, fn) {
       break;
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
-      let owner, stat;
-      try { owner = JSON.parse(await fs.readFile(lock, 'utf8')); } catch {}
-      try { stat = await fs.stat(lock); } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+      let owner, stat, raw;
+      try {
+        stat = await fs.stat(lock, {bigint: true});
+        raw = await fs.readFile(lock, 'utf8');
+        if (statToken(stat) !== statToken(await fs.stat(lock, {bigint: true}))) continue;
+      } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+      try { owner = JSON.parse(raw); } catch {}
       let dead = false;
       if (Number.isInteger(owner?.pid) && owner.pid > 0) {
         try { process.kill(owner.pid, 0); } catch (error) { dead = error.code === 'ESRCH'; }
-      } else dead = Date.now() - stat.mtimeMs > 30000;
+      } else dead = Date.now() - Number(stat.mtimeMs) > 30000;
       if (dead) {
         // Serialize stale reclaimers so one cannot delete a new owner's lock
         // after another has already reclaimed the stale inode.
@@ -114,8 +144,9 @@ export async function withLock(home, fn) {
           if (age > 30000) await fs.rmdir(reaper).catch(() => {});
         }
         if (claimed) try {
-          const current = await fs.readFile(lock, 'utf8').catch(() => null);
-          if (current !== null && (owner ? current === JSON.stringify(owner) : Date.now() - stat.mtimeMs > 30000))
+          const currentStat = await fs.stat(lock, {bigint: true}).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+          const current = await fs.readFile(lock, 'utf8').catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+          if (current === raw && statToken(currentStat) === statToken(stat))
             await fs.unlink(lock).catch(error => { if (error.code !== 'ENOENT') throw error; });
         } finally { await fs.rmdir(reaper); }
         await new Promise(resolve => setTimeout(resolve, 15));
