@@ -887,14 +887,16 @@ function renderSources() {
       await refresh(); toast(t('saved'));
     } catch (error) { toast(error.message, true); }
   });
-  host.append(el('div', {class: 'group-head'}, el('h2', {class: 'group-title'}, t('sourcesTitle'))),
+  host.append(...[
+    el('div', {class: 'group-head'}, el('h2', {class: 'group-title'}, t('sourcesTitle'))),
     el('div', {class: 'panel'},
       el('div', {class: 'field'}, el('span', {class: 'field-label'}, t('sourcesTitle')), el('span', {class: 'field-hint'}, t('sourcesHint')), lines,
         el('div', {}, el('button', {class: 'btn', onclick: () => addLine('')}, t('addSource')))),
       el('label', {class: 'field'}, el('span', {class: 'field-label'}, t('gwtLabel')), el('span', {class: 'field-hint'}, t('gwtHint')), gwt),
       el('div', {}, save)),
-    (state.recipes?.errors?.length ? note('bad', t('sourceErrors'), state.recipes.errors.map(error => `${displayPath(error.locator)} — ${error.error}`)) : null),
-    el('p', {class: 'group-note', style: 'margin:14px 4px'}, `${t('stateHome')} `, pathRow(state.overview?.stateHome ?? '')));
+    state.recipes?.errors?.length ? note('bad', t('sourceErrors'), state.recipes.errors.map(error => `${displayPath(error.locator)} — ${error.error}`)) : null,
+    el('p', {class: 'group-note', style: 'margin:14px 4px'}, `${t('stateHome')} `, pathRow(state.overview?.stateHome ?? '')),
+  ].filter(Boolean));
 }
 // ---------------------------------------------------------------- in-app guide
 const TOUR = {
