@@ -114,8 +114,10 @@ const contextSource = 'raise RuntimeError("MUST NOT EXECUTE HOST")\nclass Plugin
 const dispatchSource = 'raise RuntimeError("MUST NOT EXECUTE REQUEST CODE")\ndef request(manager, payload):\n    return manager.run_middleware("llm_request", payload)\n';
 for (const [name, source, request, supported] of [
   ['docstring fake method', 'class PluginContext:\n    """Documentation example:\n    def register_middleware(self, name, callback):\n        pass\n    """\n', dispatchSource, false],
-  ['registration without dispatch', contextSource, 'def request(client, payload):\n    return client.create(payload)\n', false],
-  ['inherited definition', 'class Base:\n    def register_middleware(self,name,callback):\n        pass\nclass PluginContext(Base):\n    pass\n', dispatchSource, true],
+  ['direct registration without dispatch inference', contextSource, 'raise RuntimeError("request source is never read")\n', true],
+  ['inherited definition', 'class Base:\n    def register_middleware(self,name,callback):\n        pass\nclass PluginContext(Base):\n    pass\n', dispatchSource, false],
+  ['class attribute shadow', contextSource + '    register_middleware = None\n', dispatchSource, false],
+  ['instance attribute shadow', contextSource + '    def __init__(self):\n        self.register_middleware = None\n', dispatchSource, false],
   ['real registration and agent dispatch', contextSource, dispatchSource, true],
   ['parse failure', 'class PluginContext(:\n', dispatchSource, false],
 ]) test(`R19: AST distinguishes ${name} and keeps overview/preview/manifest consistent`, async t => {
@@ -128,7 +130,8 @@ for (const [name, source, request, supported] of [
   b.service.homes.hermes = home; b.service.recipe = async () => recipe;
   const p = await b.service.preview({harness: 'hermes', recipe: recipe.key});
   const row = (await b.service.overview()).targets.find(row => row.harness === 'hermes');
-  assert.equal(row.capabilities.main, supported);
+  assert.equal(row.capabilities.main, false);
+  assert.equal(row.capability.state, supported ? 'unknown' : 'unsupported');
   assert.equal(p.units.find(unit => unit.path.endsWith('plugin.yaml')).afterBytes.includes(Buffer.from('provides_middleware')), supported);
   if (!supported) {
     assert.match(row.mechanism, /Main\/Sub unavailable/);

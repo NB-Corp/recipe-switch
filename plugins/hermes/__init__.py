@@ -1,13 +1,21 @@
 """Behavior recipe plugin, managed by recipe-switch."""
 import json
+import os
+import uuid
+import warnings
+from datetime import datetime, timezone
+from importlib.metadata import version as distribution_version, PackageNotFoundError
 from pathlib import Path
 from threading import Lock
 
 _ROOT = Path(__file__).resolve().parent
 _SNAPSHOT = Path(__file__).with_name("recipe.json")
+_CAPABILITY_FILE = _ROOT / "capabilities.json"
+_REPORT_LOCK = Lock()
+_report = None
 
 
-def _texts():
+def _snapshot():
     # Only this installed module's adjacent snapshot is authorized. Never follow
     # a replaced snapshot link into another home or an environment-selected path.
     if _SNAPSHOT.is_symlink() or _SNAPSHOT.resolve().parent != _ROOT:
@@ -15,7 +23,55 @@ def _texts():
     snapshot = json.loads(_SNAPSHOT.read_text(encoding="utf-8"))
     if snapshot.get("managedBy") != "recipe-switch":
         raise ValueError("Not a recipe-switch snapshot")
-    return snapshot.get("texts", {})
+    return snapshot
+
+
+def _texts():
+    return _snapshot().get("texts", {})
+
+
+def _hermes_version(ctx):
+    for key in ("hermes_version", "version"):
+        value = getattr(ctx, key, None)
+        if isinstance(value, str) and value:
+            return value
+    try:
+        return distribution_version("hermes-agent")
+    except PackageNotFoundError:
+        return "unknown (source checkout)"
+
+
+def _write_report():
+    # Atomic adjacent report only; never follow a user-replaced report symlink.
+    temp = _ROOT / (".capabilities-" + uuid.uuid4().hex + ".tmp")
+    try:
+        if _CAPABILITY_FILE.is_symlink() or _CAPABILITY_FILE.resolve().parent != _ROOT:
+            raise ValueError("recipe-switch capability report escapes the installed plugin directory")
+        with temp.open("x", encoding="utf-8") as handle:
+            json.dump(_report, handle, ensure_ascii=False)
+            handle.write("\n")
+        os.replace(temp, _CAPABILITY_FILE)
+    except (OSError, ValueError) as error:
+        warnings.warn("recipe-switch could not save runtime capabilities: " + str(error), RuntimeWarning)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def _registered(ctx):
+    global _report
+    with _REPORT_LOCK:
+        _report = {"managedBy": "recipe-switch", "middleware_registered": True,
+                   "hermes_version": _hermes_version(ctx), "registered_at": datetime.now(timezone.utc).isoformat(),
+                   "llm_request_seen": False}
+        _write_report()
+
+
+def _request_seen():
+    with _REPORT_LOCK:
+        if _report is not None and not _report["llm_request_seen"]:
+            _report["llm_request_seen"] = True
+            _report["llm_request_seen_at"] = datetime.now(timezone.utc).isoformat()
+            _write_report()
 
 
 def _append(content, text):
@@ -91,6 +147,7 @@ def _request_middleware():
     lock = Lock()
 
     def inject(request=None, session_id=None, platform=None, api_mode=None, **kwargs):
+        _request_seen()
         if not isinstance(request, dict) or not isinstance(session_id, str) or not session_id:
             return None
         with lock:
@@ -113,6 +170,7 @@ def _steer(platform=None, parent_session_id=None, **kwargs):
 
 
 def register(ctx):
-    if hasattr(ctx, "register_middleware"):
+    if _snapshot().get("hermesMiddleware") is True and callable(getattr(ctx, "register_middleware", None)):
         ctx.register_middleware("llm_request", _request_middleware())
+        _registered(ctx)
     ctx.register_hook("pre_llm_call", _steer)

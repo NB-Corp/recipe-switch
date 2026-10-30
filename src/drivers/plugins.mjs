@@ -76,10 +76,13 @@ export const hermes = {
     const state = inspectYamlList(decode(config)), disabled = pluginDisabled(state), foreign = await identityInfo(home);
     const capabilities = await hermesCapabilities(home, {env});
     if (!capabilities.llmRequest) foreign.push({what: 'Main/Sub unavailable', detail: `${HERMES_STEERING_ONLY}。${capabilities.reason}`, blocking: false});
+    else foreign.push({what: 'Hermes Main/Sub', detail: capabilities.statusText, blocking: false});
     if (disabled) foreign.push({what: 'Hermes plugin explicitly disabled', detail: 'Remove recipe-switch from plugins.disabled yourself before installing.', blocking: true});
-    return {present: await exists(home), capabilities,
-      mechanism: capabilities.llmRequest ? this.mechanism : 'Main/Sub unavailable（不可用）; per-turn steering via pre_llm_call only',
-      live: liveAt(await snapAt(dir), capabilities.llmRequest ? 'plugins/recipe-switch' : 'plugins/recipe-switch (steering only; Main/Sub unavailable)', state.present && !disabled), foreign};
+    return {present: await exists(home), capabilities, capability: capabilities,
+      mechanism: capabilities.main ? `${this.mechanism} — ${capabilities.statusText}` : capabilities.llmRequest
+        ? `Main/Sub 待确认 / pending confirmation — ${capabilities.statusText}; per-turn steering via pre_llm_call`
+        : 'Main/Sub unavailable（不可用）; per-turn steering via pre_llm_call only',
+      live: liveAt(await snapAt(dir), capabilities.llmRequest ? `plugins/recipe-switch — ${capabilities.statusText}` : 'plugins/recipe-switch (steering only; Main/Sub unavailable)', state.present && !disabled), foreign};
   },
   async desired(recipe, home, options = {}, {env = process.env} = {}) {
     if (pluginDisabled(inspectYamlList(decode(await readFile(path.join(home, 'config.yaml'))))))
@@ -87,12 +90,15 @@ export const hermes = {
     const dir = path.join(home, 'plugins', ID), units = await filesFor('hermes', dir, ['plugin.yaml', '__init__.py'], recipe);
     units.push({type: 'yamlArrayItem', path: path.join(home, 'config.yaml'), pointer: ['plugins', 'enabled'], value: ID, afterPresent: true});
     const capabilities = await hermesCapabilities(home, {env});
+    const snap = units.find(unit => path.basename(unit.path) === 'recipe.json');
+    snap.afterBytes = Buffer.from(JSON.stringify({...JSON.parse(decode(snap.afterBytes)), hermesMiddleware: capabilities.llmRequest}, null, 2) + '\n');
     if (!capabilities.llmRequest) {
       const manifest = units.find(unit => path.basename(unit.path) === 'plugin.yaml');
       manifest.afterBytes = Buffer.from(decode(manifest.afterBytes).replace('provides_middleware:\n  - llm_request\n', ''));
     }
     const notes = capabilities.llmRequest ? [
-      'Restart Hermes after installing or updating plugin code. Main/Sub are appended in full by llm_request middleware, frozen per session_id on its first request for the running plugin; recipe switches apply to new sessions and preserve existing-session prompt bytes.',
+      `Main/Sub: ${capabilities.statusText}. 直接注册方法已找到；运行时回报确认前保持待确认。A direct registration method was found; runtime evidence is required to confirm activation.`,
+      'Restart Hermes after installing or updating plugin code. When llm_request fires, Main/Sub are appended in full and frozen per session_id on its first request for the running plugin; recipe switches apply to new sessions and preserve existing-session prompt bytes.',
       'Chat system/developer messages, Anthropic system blocks, Responses instructions and Bedrock Converse system blocks are supported. Unknown request shapes or missing session ids are left unchanged.',
       'Hermes codex_app_server, auxiliary calls and max-iteration summary calls bypass llm_request and do not receive this Main/Sub injection.'
     ] : [HERMES_STEERING_ONLY, `Main/Sub unavailable: ${capabilities.reason}. Confirm Python and upgrade Hermes if needed, then reinstall. Restart Hermes after installing the steering plugin.`];

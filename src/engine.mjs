@@ -393,6 +393,18 @@ export async function applyPlan(store, planned) {
     return {changed: true, op: opId, backup: backupDir, replacedVersions, message: `${planned.kind === 'switch' ? 'Switched' : 'Installed'} ${planned.recipe?.key ?? ''}`};
   });
 }
+async function runtimeCleanup(target) {
+  if (target?.harness !== 'hermes') return [];
+  const file = path.join(target.home, 'plugins', 'recipe-switch', 'capabilities.json');
+  const boundary = await captureBoundary(target.home);
+  await assertBoundary(file, boundary);
+  const bytes = await readFile(file);
+  if (bytes === null) return [];
+  // Runtime evidence is not owned prompt content and never participates in drift.
+  // Remove only our own marked report when the plugin is fully uninstalled.
+  try { if (JSON.parse(bytes).managedBy !== 'recipe-switch') return []; } catch { return []; }
+  return [{type: 'file', path: file, boundary, beforeBytes: null, afterBytes: bytes}];
+}
 export async function planUndo(store, harness, home, {all = false, force = false} = {}) {
   const key = targetKey(harness, home), target = await store.target(key);
   if (!target?.stack?.length) throw new Error(`Nothing installed by recipe-switch for ${harness} at ${toPosix(home)}`);
@@ -405,6 +417,7 @@ export async function planUndo(store, harness, home, {all = false, force = false
     if (live !== fingerprintOf(latest, 'after')) drift.push({path: toPosix(latest.path), unit: describe(latest), live});
   }
   const units = ops.flatMap(op => op.units.map(deserialize).reverse()).map(unit => ({...unit, boundary: unit.boundary ?? path.resolve(home)}));
+  if (ops.length === target.stack.length) units.unshift(...await runtimeCleanup(target));
   return {key, harness, home: toPosix(path.resolve(home)), kind: all ? 'uninstall' : 'rollback', ops: ops.map(op => op.id),
     restores: all ? null : target.stack.at(-2)?.recipe ?? null, files: await previewFiles(units, 'before'), drift,
     notes: [RETENTION_LIMIT, RESTORE_LIMIT],
@@ -417,6 +430,7 @@ export async function applyUndo(store, planned) {
     const ops = planned.kind === 'uninstall' ? [...(target?.stack ?? [])].reverse() : target?.stack?.length ? [target.stack.at(-1)] : [];
     if (!ops.length || JSON.stringify(planned.ops) !== JSON.stringify(ops.map(op => op.id))) throw new Error('Installation state changed since the preview; preview again.');
     const units = ops.flatMap(op => op.units.map(deserialize).reverse()).map(unit => ({...unit, boundary: unit.boundary ?? planned.home}));
+    if (ops.length === target.stack.length) units.unshift(...await runtimeCleanup(target));
     const rows = await prepare(units, 'before', 'after', planned.force);
     checkPreview(rows, planned);
     const backupDir = await backup(store, `${new Date().toISOString().replace(/[:.]/g, '-')}-${crypto.randomUUID()}`, rows);
@@ -449,6 +463,8 @@ export async function planRestoreOriginal(store, harness, home, {force = false} 
       units.push({type: 'file', path: entry.path, boundary: entry.boundary ?? await captureBoundary(home),
         beforeBytes: current, afterBytes: bytes, beforeFingerprint: fp});
     }
+    for (const report of await runtimeCleanup(target)) units.push({...report, beforeBytes: report.afterBytes, afterBytes: null,
+      beforeFingerprint: inspectBytes({type: 'file'}, report.afterBytes).fp});
     return {id: crypto.randomUUID(), key, harness, home: toPosix(path.resolve(home)), kind: 'restore-original', units,
       stateVersion: stackIds(target), manifestVersion: sha256(await readFile(original.manifest)),
       files: await previewFiles(units, 'after'), drift, force,

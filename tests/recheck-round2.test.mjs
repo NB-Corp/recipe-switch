@@ -201,7 +201,8 @@ for (const supported of [false, true]) test(`R19: read-only host capability prob
   assert.equal(caps.llmRequest, supported);
   const {planned} = await install(b.service, 'hermes', recipe.key);
   const row = (await b.service.overview()).targets.find(row => row.harness === 'hermes');
-  assert.equal(row.capabilities.main, supported); assert.equal(row.capabilities.sub, supported);
+  assert.equal(row.capabilities.main, false); assert.equal(row.capabilities.sub, false);
+  assert.equal(row.capability.state, supported ? 'unknown' : 'unsupported');
   if (supported) { assert.match(planned.notes.join('\n'), /appended in full/); assert.match(await fs.readFile(path.join(home, 'plugins/recipe-switch/plugin.yaml'), 'utf8'), /provides_middleware/); }
   else {
     assert.match(row.mechanism, /Main\/Sub unavailable/);
@@ -217,8 +218,8 @@ class New(Old):
     def __init__(self): super().__init__(); self.middleware={}
     def register_middleware(self,name,fn): self.middleware[name]=fn
 old=Old(); p.register(old); assert old.hooks['pre_llm_call']()=={'context':'USER'}
-new=New(); p.register(new); assert 'llm_request' in new.middleware; assert new.hooks['pre_llm_call'](platform='subagent')=={'context':'SUB STEER'}
-print('old: steering registered; new: steering and llm_request registered')`;
+new=New(); p.register(new); assert ('llm_request' in new.middleware) == ${supported ? 'True' : 'False'}; assert new.hooks['pre_llm_call'](platform='subagent')=={'context':'SUB STEER'}
+print('steering registered; middleware follows AST eligibility')`;
   const result = spawnSync('python', ['-B', '-c', python, path.join(home, 'plugins/recipe-switch/__init__.py')], {encoding: 'utf8', env: b.env});
   assert.equal(result.status, 0, result.stderr); t.diagnostic(result.stdout.trim());
 });

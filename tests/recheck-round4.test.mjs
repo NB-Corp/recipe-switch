@@ -119,3 +119,47 @@ for (const crossVolume of [false, true]) test(`R01: latest carrier only; late wr
     await collectOrphanBlobs(b.store); assert.equal(await fs.readFile(blob, 'utf8'), 'LATE USER');
   } finally { fs.rename = rename; await handle.close(); }
 });
+
+
+test('R19: runtime registration then first real request drive overview/preview/UI states; report is not drift and uninstalls', async t => {
+  const b = await box(t), home = b.file('hermes'), {hermesCapabilities} = await import('../src/drivers/plugins.mjs');
+  const source = path.join(home, 'hermes-agent/hermes_cli/plugins.py');
+  await fs.mkdir(path.dirname(source), {recursive: true});
+  await fs.writeFile(source, 'raise RuntimeError("read only")\nclass PluginContext:\n    def register_middleware(self, name, callback):\n        pass\n');
+  const caps = await hermesCapabilities(home, {env: b.env});
+  if (caps.reason?.includes('Python unavailable')) return t.skip(caps.reason);
+  b.service.homes.hermes = home;
+  const r = {...recipe, texts: {main: 'MAIN', sub: 'SUB', userSteer: 'STEER', subSteer: 'SUB STEER'}};
+  b.service.recipe = async () => r;
+  const planned = await b.service.preview({harness: 'hermes', recipe: r.key}); await b.service.apply(planned.id);
+  const entry = path.join(home, 'plugins/recipe-switch/__init__.py'), reportFile = path.join(home, 'plugins/recipe-switch/capabilities.json');
+  const state = async () => (await b.service.overview()).targets.find(row => row.harness === 'hermes');
+  assert.equal((await state()).capability.state, 'unknown');
+  const run = mode => spawnSync('python', ['-I', '-B', '-c', String.raw`import importlib.util,sys
+s=importlib.util.spec_from_file_location('candidate',sys.argv[1]); p=importlib.util.module_from_spec(s); s.loader.exec_module(p)
+class Context:
+    hermes_version='fixture-1.2.3'
+    def register_hook(self,name,fn): pass
+    def register_middleware(self,name,fn):
+        if sys.argv[2]=='fail': raise RuntimeError('registration failed')
+        self.inject=fn
+ctx=Context()
+try: p.register(ctx)
+except RuntimeError: pass
+if sys.argv[2]=='request': ctx.inject(request={'messages':[]},session_id='real')
+`, entry, mode], {env: b.env, encoding: 'utf8'});
+  assert.equal(run('fail').status, 0); assert.equal(await exists(reportFile), false);
+  assert.equal(run('register').status, 0);
+  let row = await state(); assert.equal(row.capability.state, 'registered'); assert.equal(row.capability.main, false);
+  let report = JSON.parse(await fs.readFile(reportFile));
+  assert.equal(report.hermes_version, 'fixture-1.2.3'); assert.equal(report.middleware_registered, true);
+  assert.equal(report.llm_request_seen, false); assert.ok(Date.parse(report.registered_at));
+  assert.match((await b.service.preview({harness: 'hermes', recipe: r.key})).notes.join('\n'), /已注册，尚未见到请求/);
+  assert.equal(run('request').status, 0);
+  row = await state(); assert.equal(row.capability.state, 'confirmed'); assert.equal(row.capability.main, true);
+  assert.equal(row.managed.drift.length, 0);
+  report = JSON.parse(await fs.readFile(reportFile)); assert.equal(report.llm_request_seen, true); assert.ok(Date.parse(report.llm_request_seen_at));
+  assert.match((await b.service.preview({harness: 'hermes', recipe: r.key})).notes.join('\n'), /已确认生效/);
+  const removal = await b.service.previewUndo({harness: 'hermes', all: true}); await b.service.applyUndo(removal.id);
+  assert.equal(await exists(reportFile), false); assert.equal(await exists(path.dirname(entry)), false);
+});
