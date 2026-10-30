@@ -54,18 +54,19 @@ description: "了解 recipe-switch 如何保护你的本地 AI 编程工具配�
 
 ---
 
-## 4. 可逆事务与崩溃恢复（`src/engine.mjs`）
+## 4. 可逆事务、被替换旧文件与崩溃恢复（`src/engine.mjs`）
 
 所有状态与备份默认保存在 `$RECIPE_SWITCH_HOME`（`~/.recipe-switch`）：
 - `state.json` — 按工具目标记录的操作栈（每次 `install` / `switch` 的完整前后快照）。
-- `backups/<op-id>/` — 每次操作前受影响文件的完整字节副本、被替换版本的归档文件，以及带 SHA-256 的 `index.json`。
+- `backups/<op-id>/` — 每次操作前受影响文件的完整字节副本、被替换下来的旧文件，以及带 SHA-256 的 `index.json`。
 - `pending.json` — 持久化的预写式补偿日志（write-ahead compensation journal）。
 
 在真正写目标文件之前：
 1. 进程间文件锁保证 CLI 与 Web UI 请求严格串行。
 2. 真实规范路径检查（`assertBoundary`）确保没有任何符号链接或 Windows junction 能把写入导向工具目录之外。
 3. 先写好 `backups/<op-id>/` 并将恢复信息刷入 `pending.json`。
-4. 如果在多文件写入中途遭遇断电或进程崩溃，下一次运行任何 `recipe-switch` 命令时都会自动执行 `store.recover()`，将半途写入的文件精确回滚到操作前的字节。（如果崩溃后你又手动编辑了该文件，恢复逻辑会保留你的手动修改，并打印备份路径交由你决定。）
+4. **被替换下来的旧文件（同卷与跨卷处理）**：当 `recipe-switch` 的状态目录和目标文件处于**同一磁盘卷**时，被替换下来的旧文件会直接移进本次操作的备份目录（`backups/<op-id>/`）；如果两者**不在同一个卷**，旧文件就留在原文件旁边，路径写进备份记录和操作结果，卸载时不会自动删除，由用户自己清理。
+5. 如果在多文件写入中途遭遇断电或进程崩溃，下一次运行任何 `recipe-switch` 命令时都会自动执行 `store.recover()`，将半途写入的文件精确回滚到操作前的字节。（如果崩溃后你又手动编辑了该文件，恢复逻辑会保留你的手动修改，并打印备份路径交由你决定。）
 
 ---
 
@@ -78,6 +79,12 @@ description: "了解 recipe-switch 如何保护你的本地 AI 编程工具配�
 | **撤回上一步** | `recipe-switch rollback <harness> [--yes]` | **撤回上一步** | 弹出操作栈顶的最近一次操作，回到上一份配方（若栈里只有一次安装，则回到初始状态）。 |
 | **还原（卸载）** | `recipe-switch uninstall <harness> [--yes]` | **还原** | 逆序撤销该工具栈上的全部操作，恢复原始文件字节与源码跨度，并清理新建的空目录。 |
 | **原始备份 / 恢复到装之前** | `recipe-switch originals <harness>`<br>`recipe-switch restore-original <harness> [--yes]` | **原始备份 / 恢复到装之前** | 查看或直接恢复该工具在首次安装 `recipe-switch` 之前的初始备份状态——无论中间经历过多少次切换或强制覆盖，都能一键回到装之前的模样。 |
+
+### 原始备份为什么占用空间很小？
+
+- **只存被改动文件的原样一份**：原始备份只给会被原地修改的已有文件存快照；原来不存在的文件只记一笔"原来不存在"。
+- **按 SHA-256 去重**：文件内容按 `sha256` 存一份，相同的内容绝不重复存。
+- **首次写入、按需释放**：快照只在第一次写入。只有当某个工具恢复到装之前、并且完全卸载以后，才会释放已经没人用的内容。
 
 ![撤回上一步预览](../screenshots/08-rollback-preview.png)
 ![还原预览](../screenshots/09-uninstall-preview.png)

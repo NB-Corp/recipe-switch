@@ -149,10 +149,13 @@ description: "详细拆解 recipe-switch 在 OpenAI Codex、Claude Code、Kiki�
 - **写入内容**：
   - `plugins/recipe-switch/{plugin.yaml,__init__.py,recipe.json}`。
   - 在 `config.yaml` 的 `plugins.enabled` 块级列表中加入 `recipe-switch`。
-- **静态源码能力探测（绝不 import 宿主）**：
-  - 安装前，`recipe-switch` 只把 `<home>/hermes-agent/hermes_cli/plugins.py`（若不存在则查 `<home>/hermes_cli/plugins.py`）当作纯文本读取，**绝不 import 运行 Hermes**（避免触发宿主插件发现或污染用户状态）。
-  - **支持 `PluginContext.register_middleware` 的版本**：同时注册 `llm_request` 中间件与 `pre_llm_call` 钩子。`llm_request` 会将完整的主/子代理系统提示词追加到 `chat_completions`（`system`/`developer` 消息）、`anthropic_messages`（`system` 块）、`codex_responses`（`instructions`）和 `bedrock_converse`（`system` 块，并保持末尾 `cachePoint` 仍在最后以覆盖新增文本）。每个 `session_id` 在首次请求时冻结角色与系统提示词文本，因此切换配方只对新会话生效，不会破坏进行中会话的提示词字节与缓存。
-  - **旧版 Hermes（无 `register_middleware`）**：自动从 `plugin.yaml` 移除 `provides_middleware`，**仅安装每轮提醒（`pre_llm_call`）**，并在说明中提示需升级 Hermes 后重新安装才能启用主/子系统提示词。
+- **Python AST 源码能力解析（绝不执行宿主代码）**：
+  - 安装前，`recipe-switch` 会用 Python（`python` 或 `py -3`）对宿主源码（`hermes_cli/plugins.py`、`run_agent.py` 及 `agent/` 下的相关文件）做 AST 解析，**绝不导入或执行宿主代码**。
+  - **必须同时确认两件事**：
+    1. `PluginContext`（包括同模块内继承的父类）真的定义了 `register_middleware` 方法；
+    2. 请求路径（`run_agent.py` 以及 `agent/` 下的相关文件）里确实会调度 `llm_request`。
+  - **两项同时满足时**：同时注册 `llm_request` 中间件与 `pre_llm_call` 钩子。`llm_request` 会将完整的主/子代理系统提示词追加到 `chat_completions`（`system`/`developer` 消息）、`anthropic_messages`（`system` 块）、`codex_responses`（`instructions`）和 `bedrock_converse`（`system` 块，并保持末尾 `cachePoint` 仍在最后以覆盖新增文本）。每个 `session_id` 在首次请求时冻结角色与系统提示词文本，因此切换配方只对新会话生效，不会破坏进行中会话的提示词字节与缓存。
+  - **本机没有 Python、AST 解析失败，或两件事缺任何一件时**：自动从 `plugin.yaml` 移除 `provides_middleware`，**只安装每轮提醒（`pre_llm_call` steering）**。主/子代理系统提示要等 Hermes 升级后才生效，具体的降级原因会直接显示在总览（`status`）、UI 和预览里。
 - **已知旁路与限制**：
   - Hermes 内部的 `codex_app_server`、辅助调用（auxiliary calls）与最大轮次总结（max-iteration summary）不经过 `llm_request` 中间件。
   - `SOUL.md` 与 `AGENTS.md` 保持原样不改。

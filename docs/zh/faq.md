@@ -62,6 +62,14 @@ Kimi Code CLI 从 `~/.kimi-code/SYSTEM.md` 读取系统提示词，并从 `~/.ki
 
 ---
 
+### 原始备份和每次操作的备份会占很多磁盘空间吗？被替换下来的旧文件放哪了？
+
+**占用空间很小：只存被改动文件的原样一份，相同内容去重。**
+- **原始备份（`originals` / `restore-original`）**：只在第一次写入时记录。只给会被原地修改的已有文件存快照，原来不存在的文件只记一笔"原来不存在"。内容按 `sha256` 存一份，相同的内容不重复存。只有当某个工具恢复到装之前、并且完全卸载以后，才会释放已经没人用的内容。
+- **被替换下来的旧文件**：同一磁盘卷时，会移进本次操作的备份目录（`~/.recipe-switch/backups/<op-id>/`）。如果 `recipe-switch` 的状态目录和目标文件不在同一个卷，旧文件就留在原文件旁边，路径写进备份记录和操作结果；卸载时不会自动删除，由你自己清理。
+
+---
+
 ### 装上配方后，我又手动改了提示词或配置文件，会发生什么？
 
 `recipe-switch` 对它托管的每一个文件、每一行 TOML 键值、每一个 JSON 键/数组项和 YAML 列表项都记录了指纹。只要你手动修改过这些受管内容（或删掉了 `# managed by recipe-switch` 注释），运行 `status` 或打开 Web 面板就会看到 **"有手改（Edited）"** 标记。
@@ -87,7 +95,11 @@ OpenClaw 的安全策略规定，非内置插件必须在 `openclaw.json` 中具
 
 ### 为什么 Hermes 显示 `Main/Sub unavailable（不可用）; per-turn steering via pre_llm_call only`？
 
-Hermes 的主/子代理系统提示词注入依赖 `PluginContext.register_middleware("llm_request", ...)`。安装前，`recipe-switch` 会以纯文本方式检查 `<home>/hermes-agent/hermes_cli/plugins.py`（或 `<home>/hermes_cli/plugins.py`）。如果你本机的 Hermes 版本较旧、还没有 `register_middleware` 接口，工具会自动降级为**只安装 `pre_llm_call` 每轮提醒**。等你升级 Hermes 后重新运行一次 `install` 即可启用完整的主/子系统提示词。另外请注意，Hermes 的原生 `codex_app_server`、辅助调用（auxiliary）和最大轮次总结（max-iteration summary）本身不经过 `llm_request` 插件。
+`recipe-switch` 在安装前会用 Python（`python` 或 `py -3`）对宿主源码做 AST 解析，不执行宿主代码。必须同时确认两件事：
+1. `PluginContext`（包括同模块内继承的父类）真的定义了 `register_middleware`；
+2. 请求路径（`run_agent.py` 以及 `agent/` 下的相关文件）里确实会调度 `llm_request`。
+
+如果本机没有 Python、AST 解析失败，或者两件事缺任何一件，都只安装每轮提醒（steering）。主/子代理系统提示要等 Hermes 升级后才生效，降级原因会直接显示在总览（`status`）、UI 和预览里。另外请注意，Hermes 的原生 `codex_app_server`、辅助调用（auxiliary）和最大轮次总结（max-iteration summary）不经过插件。
 
 ---
 

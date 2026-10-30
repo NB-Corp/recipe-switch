@@ -89,10 +89,10 @@ node bin/recipe-switch.mjs ui
 | **Grok Build** | `grok` | `GROK_HOME`, `~/.grok` | 全局规则文件 `rules/recipe-switch.md`（带 HTML 注释标记）；你原有的其他规则文件保留并照常加载 | 无（Grok 的 hooks 无法向模型上下文追加内容） |
 | **OpenCode** | `opencode` | `OPENCODE_CONFIG_DIR`, `$XDG_CONFIG_HOME/opencode`（`~/.config/opencode`） | `recipe-switch/{main.md,recipe.json}`，并在 `opencode.json` 的 `instructions` 数组中添加一项路径（要求 `opencode.json` 为标准纯 JSON） | 暂未接入 |
 | **Kimi Code CLI** | `kimi-code` | `KIMI_CODE_HOME`, `~/.kimi-code` | 带标记的 `SYSTEM.md`（保留 `${base_prompt}` 并追加 Main）、`plugins/managed/recipe-switch/{kimi.plugin.json,steer.mjs,recipe.json}`，以及 `plugins/installed.json` 中的一条插件记录。若启用了 Main 且存在非本工具托管的 `SYSTEM.md` 则会拦截 | 每次 `UserPromptSubmit` 时从 `recipe.json` 重读用户提醒；子代理 profile 保持不变 |
-| **Hermes Agent** | `hermes` | `HERMES_HOME`；Windows 默认 `%LOCALAPPDATA%/hermes`，其他系统 `~/.hermes` | `plugins/recipe-switch/{plugin.yaml,__init__.py,recipe.json}`，并在 `config.yaml` 的 `plugins.enabled` 块级列表中加入一项。安装前只读检查 `<home>/hermes-agent/hermes_cli/plugins.py`（或 `<home>/hermes_cli/plugins.py`）源码，绝不 import 运行 Hermes | 在 `pre_llm_call` 注入：主会话用用户提醒，委派的子代理用子代理提醒 |
+| **Hermes Agent** | `hermes` | `HERMES_HOME`；Windows 默认 `%LOCALAPPDATA%/hermes`，其他系统 `~/.hermes` | `plugins/recipe-switch/{plugin.yaml,__init__.py,recipe.json}`，并在 `config.yaml` 的 `plugins.enabled` 块级列表中加入一项。用 Python（`python` 或 `py -3`）对宿主源码做 AST 解析，不执行宿主代码 | 在 `pre_llm_call` 注入：主会话用用户提醒，委派的子代理用子代理提醒 |
 | **OpenClaw** | `openclaw` | `OPENCLAW_STATE_DIR` 或 `<OPENCLAW_HOME 或 ~>/.openclaw`；配置文件可用 `OPENCLAW_CONFIG_PATH` 覆盖 | `extensions/recipe-switch/{package.json,openclaw.plugin.json,index.mjs,recipe.json}`，在严格 JSON 配置中开启 `plugins.entries.recipe-switch.enabled = true`，并在已存在 `plugins.allow` 时加入白名单 | 常规会话注入 Main + 用户提醒；`subagent:<id>` 或 `agent:<agent>:subagent:<id>` 会话注入 Sub + 子代理提醒 |
 
-> **Hermes 补充说明：** 当本机 Hermes 源码包含 `PluginContext.register_middleware` 时，插件会通过 `llm_request` 中间件把完整的主/子代理系统提示词追加到 Chat `system`/`developer` 消息、Anthropic `system` 块、Responses `instructions` 或 Bedrock Converse `system` 块中（按 `session_id` 在首次请求时冻结文本，切换配方只影响新开会话，不破坏进行中会话的缓存与上下文）。Hermes 的原生 `codex_app_server`、辅助调用（auxiliary）和最大轮次总结（max-iteration summary）不经过 `llm_request` 插件。如果旧版 Hermes 没有该中间件，则只安装每轮提醒（steering），待升级 Hermes 后重新安装即可启用主/子系统提示词。
+> **Hermes 补充说明：** 安装前，`recipe-switch` 会用 Python（`python` 或 `py -3`）对宿主源码做 AST 解析，不执行宿主代码。必须同时确认两件事：`PluginContext`（包括同模块内继承的父类）真的定义了 `register_middleware`；请求路径（`run_agent.py` 以及 `agent/` 下的相关文件）里确实会调度 `llm_request`。两项都确认时，`llm_request` 中间件会把完整的主/子代理系统提示词追加到 Chat `system`/`developer` 消息、Anthropic `system` 块、Responses `instructions` 或 Bedrock Converse `system` 块中（按 `session_id` 在首次请求时冻结文本，切换配方只影响新会话）。Hermes 的原生 `codex_app_server`、辅助调用（auxiliary）和最大轮次总结（max-iteration summary）不经过该插件。若本机没有 Python、解析失败，或两件事缺任何一件，都只安装每轮提醒（steering）；主/子代理系统提示要等 Hermes 升级后才生效，降级原因会直接显示在总览、UI 和预览里。
 >
 > **OpenClaw 补充说明：** OpenClaw 要求非内置插件具备 `plugins.entries.recipe-switch.hooks.allowConversationAccess = true` 才能触发对话钩子。默认情况下 `recipe-switch` 不会替你开启该权限，而是在预览说明里提示你；在本地 UI 的工具设置里，你可以主动勾选**"授予 recipe-switch 插件对话访问权限"**让工具写入该项（卸载时会自动还原），CLI 用户请手动配置。如果配置文件里原本显式写了 `allowConversationAccess: false`、`allowPromptInjection: false`、`plugins.enabled: false` 或把插件列入了 `plugins.deny`，即便加 `--force` 也不会越权覆盖，需你先手动修改。
 
@@ -113,11 +113,11 @@ node bin/recipe-switch.mjs ui
 改本地编程工具的配置最怕"改坏了回不去"或"把自己辛辛苦苦调好的提示词冲掉了"。`recipe-switch` 的安全边界由代码严格保证：
 
 1. **先预览 Diff，确认才落盘。** 所有写入命令默认都是 dry run，完整展示每个文件的 unified diff（包括换行符与文件末尾空行变化）。只有加了 `--yes` 或在 UI 点下"确认写入"才会真正修改磁盘。如果预览之后文件在外部发生了变化，写入会立即中止并要求重新预览。
-2. **每次操作自动完整备份。** 每次写入、切换、撤回或卸载前，都会把涉及文件的原始字节原封不动备份到 `~/.recipe-switch/backups/<op-id>/` 并记录 SHA-256 校验索引，同时保留被替换文件的归档副本。
+2. **每次操作自动备份与旧文件妥善安置。** 每次写入、切换、撤回或卸载前，都会把受影响文件的原始字节备份到 `~/.recipe-switch/backups/<op-id>/` 并记录 SHA-256 校验索引。被替换下来的旧文件，在处于同一磁盘卷时会直接移进本次操作的备份目录；如果 `recipe-switch` 的状态目录和目标文件不在同一个卷，旧文件就留在原文件旁边，路径写进备份记录和操作结果，卸载时不会自动删除，由你自行清理。
 3. **最小化且带标记的托管范围。** 除专属的 `recipe-switch/` 目录（及 Kimi Code 带标记的 `SYSTEM.md` 包装层）外，在你的 `config.toml`、`opencode.json`、`config.yaml` 等个人配置文件里，它只接管带 `# managed by recipe-switch` 注释的单行键值、单个 JSON 键值/数组元素，或 YAML 列表中的单个条目。文件里的其他配置、注释、转义字符和空白排版在卸载时都会按原样跨度（source span）精确恢复。
 4. **手动修改检测与拦截。** 每次改动前都会核对受管单元的指纹。只要你手动编辑过受管文件或删改了标记注释，界面就会亮起"有手改"黄灯，并拦截切换或还原操作。你可以先把自己的修改移走，也可以点**"仍然覆盖（先备份）"**（或 CLI 传 `--force`）——工具会先把你的手改版本完整备份下来，并在结果里告诉你备份路径。
 5. **逐级撤回（`rollback`）与完整还原（`uninstall`）。** `rollback` 撤回最近一次安装或切换，回到上一份配方；`uninstall` 撤销该工具上的全部历史操作，删掉工具新建的空目录，逐字节恢复原状。
-6. **原始状态备份与恢复到装之前（"原始备份 / 恢复到装之前"）。** 除了按步记录的操作栈，`recipe-switch` 还专门保存每个工具在首次安装配方之前的原始状态快照。你可以随时通过 `originals` / `restore-original` 命令或 UI 中的**"原始备份 / 恢复到装之前"**一键回到最初未装 `recipe-switch` 时的状态。
+6. **原始状态备份与恢复到装之前（"原始备份 / 恢复到装之前"）——占用空间极小。** 除了按步记录的操作栈，`recipe-switch` 还会在第一次写入时记录每个工具安装前的原始状态（CLI 命令 `recipe-switch originals <harness>` 与 `recipe-switch restore-original <harness> [--yes]`，界面上叫**"原始备份 / 恢复到装之前"**）。它占用空间很小：只存被改动文件的原样一份，相同内容按 SHA-256 去重不重复存；原来不存在的文件只记一笔"原来不存在"。快照只在第一次写入，只有当某个工具恢复到装之前、并且完全卸载以后，才会释放已经没人用的内容。
 7. **路径边界锁定与本机隔离。** 写入前通过真实规范路径（canonical path）校验目标边界，防止符号链接或 Windows 目录联接（junction）将写入引向工具目录之外。Web UI 仅绑定 `127.0.0.1`，每次启动生成独立的进程级随机 Token，并拒绝非本机 `Origin` 与异常 `Host` 请求。
 
 ---

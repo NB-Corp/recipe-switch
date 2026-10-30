@@ -149,10 +149,13 @@ description: "Detailed reference of how recipe-switch installs prompts and per-t
 - **What `recipe-switch` writes**:
   - `plugins/recipe-switch/{plugin.yaml,__init__.py,recipe.json}`.
   - Adds `recipe-switch` to the `plugins.enabled` block list in `config.yaml`.
-- **Static Capability Detection (No Host Import)**:
-  - Before installing, `recipe-switch` inspects `<home>/hermes-agent/hermes_cli/plugins.py` (or `<home>/hermes_cli/plugins.py`) as plain source text — it never imports Hermes.
-  - **With `PluginContext.register_middleware`**: Installs both `llm_request` middleware and the `pre_llm_call` hook. `llm_request` appends full Main/Sub prompts to `chat_completions` (`system`/`developer` messages), `anthropic_messages` (`system` blocks), `codex_responses` (`instructions`), and `bedrock_converse` (`system` blocks, keeping trailing `cachePoint` last). Each `session_id` freezes its Main/Sub text on its first request in the running plugin so switching recipes affects new sessions without invalidating in-flight sessions.
-  - **Without `register_middleware` (older Hermes)**: Automatically strips `provides_middleware: [llm_request]` from `plugin.yaml`, installs per-turn steering (`pre_llm_call`) only, and notes that Main/Sub require upgrading Hermes and reinstalling.
+- **AST Capability Probe (No Host Execution)**:
+  - Before installing, `recipe-switch` uses Python (`python` or `py -3`) to parse the host source AST (`hermes_cli/plugins.py`, `run_agent.py`, and files under `agent/`) without importing or executing host code.
+  - **Two checks must both pass**:
+    1. `PluginContext` (including any parent classes inherited within the same module) defines a `register_middleware` method; and
+    2. The request path (`run_agent.py` and related files under `agent/`) actually dispatches `llm_request`.
+  - **When both are confirmed**: Installs both `llm_request` middleware and the `pre_llm_call` hook. `llm_request` appends full Main/Sub prompts to `chat_completions` (`system`/`developer` messages), `anthropic_messages` (`system` blocks), `codex_responses` (`instructions`), and `bedrock_converse` (`system` blocks, keeping trailing `cachePoint` last). Each `session_id` freezes its Main/Sub text on its first request in the running plugin so switching recipes affects new sessions without invalidating in-flight sessions.
+  - **When Python is unavailable, AST parsing fails, or either check is missing**: Automatically strips `provides_middleware: [llm_request]` from `plugin.yaml` and installs per-turn steering (`pre_llm_call`) only. Main/Sub prompts take effect once Hermes is upgraded; the exact downgrade reason is displayed in `status` overview, the UI, and the preview.
 - **Known Bypasses & Limits**:
   - Native `codex_app_server`, auxiliary calls, and max-iteration summary calls inside Hermes do not pass through `llm_request` middleware.
   - `SOUL.md` and `AGENTS.md` are never modified.

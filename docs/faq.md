@@ -53,7 +53,15 @@ You have three options depending on how far back you want to go:
   node bin/recipe-switch.mjs originals <harness>
   node bin/recipe-switch.mjs restore-original <harness> --yes
   ```
-In the local web UI (`recipe-switch ui`), open the tool card and click **Undo last change**, **Restore**, or **Original backup / Restore to before install**.
+In the local web UI (`recipe-switch ui`), open the tool card and click **Undo last change**, **Restore**, or **原始备份 / 恢复到装之前**.
+
+---
+
+### Do backups and original snapshots take up much disk space? What happens to replaced files?
+
+**Storage overhead is tiny: `recipe-switch` only stores one copy of the original files it modifies, deduplicated by content.**
+- **Original backups (`originals` / `restore-original`)**: Written only on the first install. Only existing files that will be modified in place are snapshotted; files that did not exist before are recorded simply as "originally absent". File contents are stored once by SHA-256 (identical content is never stored twice) and released only after the tool is restored to its pre-install state and completely uninstalled.
+- **Displaced old files during operations**: When the state directory and target file are on the same disk volume, a replaced old file is moved into that operation's backup directory (`~/.recipe-switch/backups/<op-id>/`). If they are on different volumes, the old file is left next to the original file, its path is written into the backup record and operation result, and `uninstall` leaves it in place for you to clean up manually.
 
 ---
 
@@ -82,7 +90,11 @@ OpenClaw's security policy requires non-bundled plugins to have `plugins.entries
 
 ### Why does Hermes Agent say `Main/Sub unavailable; per-turn steering via pre_llm_call only`?
 
-Full Main and Subagent system prompt injection in Hermes relies on `PluginContext.register_middleware("llm_request", ...)`. Before installing, `recipe-switch` checks `<home>/hermes-agent/hermes_cli/plugins.py` (or `<home>/hermes_cli/plugins.py`) as plain text. If your local Hermes checkout is an older version without `register_middleware` (or if the source file isn't in the Hermes home), `recipe-switch` safely falls back to installing the `pre_llm_call` steering hook only. Upgrade Hermes and run `recipe-switch install hermes <recipe> --yes` again to enable full Main/Sub system prompts. Note that Hermes's native `codex_app_server`, auxiliary calls, and max-iteration summary calls bypass `llm_request` middleware by design.
+Before installing into Hermes, `recipe-switch` uses Python (`python` or `py -3`) to parse the host source AST without executing host code. It checks two requirements at once:
+1. `PluginContext` (including same-module parent classes) defines `register_middleware`; and
+2. The request path (`run_agent.py` and files under `agent/`) actually dispatches `llm_request`.
+
+If Python is not installed on the machine, AST parsing fails, or either requirement is missing, `recipe-switch` installs per-turn steering (`pre_llm_call`) only, and shows the exact downgrade reason in `status`, the UI, and the preview. Main and Subagent system prompts take effect once Hermes is upgraded. Note that Hermes's native `codex_app_server`, auxiliary calls, and max-iteration summary calls bypass the plugin by design.
 
 ---
 
