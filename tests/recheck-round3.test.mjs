@@ -35,21 +35,15 @@ test('R01: writes through a held displaced inode remain recoverable in the opera
   assert.deepEqual(await fs.readdir(path.dirname(file)), ['main']);
 });
 
-for (const code of ['ENOTSUP', 'EPERM', 'EXDEV', 'EINVAL']) test(`R20: ${code} hardlinks fall back for install, switch, compensation and uninstall`, async t => {
-  const b = await box(t), file = targetFile(b), link = fs.link;
-  let failed = 0;
-  fs.link = async () => { failed++; throw Object.assign(new Error('unsupported link'), {code}); };
+for (const code of ['ENOTSUP', 'EPERM', 'EXDEV', 'EINVAL']) test(`R23/R20: ${code} hardlinks block before install and leave no probe artifacts`, async t => {
+  const b = await box(t), link = fs.link;
+  fs.link = async () => { throw Object.assign(new Error('unsupported link'), {code}); };
   try {
-    await install(b, 'MANAGED 1'); assert.equal(await fs.readFile(file, 'utf8'), 'MANAGED 1');
-    await install(b, 'MANAGED 2'); assert.equal(await fs.readFile(file, 'utf8'), 'MANAGED 2');
-    const planned = await preview(b, 'MANAGED 3'), save = b.store.save;
-    b.store.save = async () => { throw new Error('R20 state failure'); };
-    await assert.rejects(applyPlan(b.store, planned), /R20 state failure/); b.store.save = save;
-    assert.equal(await fs.readFile(file, 'utf8'), 'MANAGED 2');
-    await applyUndo(b.store, await planUndo(b.store, 'fixture', b.home, {all: true}));
+    const planned = await preview(b, 'MANAGED 1');
+    assert.match(planned.blocked.join('\n'), /不支持硬链接.*does not support hard links/);
+    await assert.rejects(applyPlan(b.store, planned), /blocked/);
     assert.equal(await exists(b.home), false); assert.equal(await exists(b.store.pending), false);
   } finally { fs.link = link; }
-  assert.ok(failed >= 4);
 });
 
 const engine = new URL('../src/engine.mjs', import.meta.url).href;
@@ -60,10 +54,10 @@ function child(b, body, fallback = false) {
   assert.equal(result.status, 0, result.stderr);
 }
 
-for (const fallback of [false, true]) test(`R21/R20: compensation survives a second crash (${fallback ? 'copy fallback' : 'hardlink'})`, async t => {
+for (const fallback of [false, true]) test(`R21/R23: compensation survives a second crash (${fallback ? 'recovery rename fallback' : 'hardlink'})`, async t => {
   const b = await box(t), file = targetFile(b);
   await install(b, 'MANAGED 1');
-  child(b, `const p=await plan({store:s,harness:'fixture',home,recipe,desired:[fileUnit(file,'MANAGED 2')]});s.save=async()=>process.exit(0);await applyPlan(s,p);`, fallback);
+  child(b, `const p=await plan({store:s,harness:'fixture',home,recipe,desired:[fileUnit(file,'MANAGED 2')]});s.save=async()=>process.exit(0);await applyPlan(s,p);`);
   assert.equal(await fs.readFile(file, 'utf8'), 'MANAGED 2');
   child(b, `const rename=fs.rename;fs.rename=async(f,to)=>{const x=await rename(f,to);if(f===file)process.exit(0);return x};await s.load();`, fallback);
   assert.equal(await exists(file), false);
@@ -88,7 +82,7 @@ for (const stage of ['after-rename-away', 'before-link', 'after-link', 'after-st
 });
 
 
-test('R01: cross-volume displaced inode is registered beside target and survives later uninstall', async t => {
+test('R01: cross-volume displaced inode is registered and retired at the next committed operation', async t => {
   const b = await box(t), file = targetFile(b); await install(b, 'MANAGED 1');
   const rename = fs.rename;
   fs.rename = async (from, to) => {
@@ -106,7 +100,10 @@ test('R01: cross-volume displaced inode is registered beside target and survives
     assert.ok(index[0].replacedVersions.includes(actual));
     await applyUndo(b.store, await planUndo(b.store, 'fixture', b.home, {all: true}));
     assert.equal(await exists(file), false);
-    assert.equal(await fs.readFile(actual, 'utf8'), 'MANAGED 1');
+    assert.equal(await exists(actual), false);
+    const active = (await b.store.load()).replacedVersions.flatMap(group => group.files);
+    assert.equal(active.length, 1);
+    assert.equal(await fs.readFile(active[0].saved, 'utf8'), 'MANAGED 2');
     assert.equal(await exists(b.store.pending), false);
   } finally { fs.rename = rename; }
 });

@@ -4,10 +4,11 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import {readFile, writeFile, restoreDisplaced, rmdirIfEmpty, equalBytes, toPosix, sha256, assertBoundary, captureBoundary, withLock, exists} from './fsx.mjs';
+import {readFile, writeFile, restoreDisplaced, rmdirIfEmpty, equalBytes, toPosix, sha256, assertBoundary, captureBoundary, withLock, exists, probeHardlinks} from './fsx.mjs';
 import {inspect, inspectBytes, fingerprintOf, render, recordLayout, identity, ABSENT} from './units.mjs';
 import {unifiedDiff} from './diff.mjs';
 import {prepareOriginals, publishOriginals, readOriginals, originalBytes, collectOrphanBlobs} from './originals.mjs';
+import {releaseCarrierReferences, retireCarriers, RETENTION_LIMIT} from './retained.mjs';
 
 export const MARK = 'managed by recipe-switch';
 export const stateHome = (env = process.env) => path.resolve(env.RECIPE_SWITCH_HOME || path.join(os.homedir(), '.recipe-switch'));
@@ -59,7 +60,10 @@ async function retainedIndex(journal) {
     entry.replacedVersions = [];
     for (const artifact of [row, row.recovery]) {
       const saved = artifact.external ? artifact.displaced : artifact.archive;
-      if (saved && await exists(saved)) entry.replacedVersions.push(toPosix(saved));
+      if (saved && await exists(saved)) {
+        entry.replacedVersions.push(toPosix(saved));
+        (entry.carrierHashes ??= {})[toPosix(saved)] = sha256(dec(artifact === row ? row.before : row.after));
+      }
     }
   }
   await assertBoundary(file, journal.backupBoundary);
@@ -69,8 +73,9 @@ async function cleanTemp(row, artifact, expected, journal) {
   if (!artifact.temp || !await exists(artifact.temp)) return;
   const prefix = `${row.path}.recipe-switch-${journal.id}-`;
   await assertBoundary(artifact.temp, row.boundary);
-  if (!artifact.temp.startsWith(prefix) || !artifact.temp.endsWith('.tmp') || !equalBytes(await readFile(artifact.temp), expected))
-    throw new Error(`Transaction temp changed; kept at ${toPosix(artifact.temp)}`);
+  if (!artifact.temp.startsWith(prefix) || !artifact.temp.endsWith('.tmp'))
+    throw new Error(`Unregistered transaction temp: ${toPosix(artifact.temp)}`);
+  // R22: a registered random temp is ours, including an interrupted partial write.
   await fs.unlink(artifact.temp);
 }
 async function compensate(store, journal, row) {
@@ -134,7 +139,7 @@ export class Store {
     }
     const committed = equalBytes(await readFile(this.file), dec(journal.stateAfter));
     if (!committed) for (const row of [...journal.files].reverse()) await compensate(this, journal, row);
-    // Retain displaced inodes on both commit and compensation. Never unlink them.
+    // Retain the current operation's displaced inodes, including compensation.
     for (const row of journal.files) {
       await archiveDisplaced(this, journal, row);
       if (row.recovery) await archiveDisplaced(this, journal, row, row.recovery);
@@ -143,6 +148,7 @@ export class Store {
     }
     if (committed) await publishOriginals(this, journal.originals);
     await retainedIndex(journal);
+    if (committed) await retireCarriers(this, journal.files.map(row => row.path), journal.backup);
     for (const dir of committed ? journal.cleanupDirs ?? [] : [...journal.missingDirs].reverse()) await rmdirIfEmpty(dir);
     await writeFile(this.pending, null, {durable: true});
   }
@@ -227,10 +233,10 @@ export async function plan({store, harness, home, recipe, desired, notes = [], f
     }
   }
   const files = await previewFiles(units, 'after');
-  const blocked = !force ? [...drift.map(d => `hand edit detected: ${d.path} (${d.unit})`), ...conflicts.map(c => `${c.reason}: ${c.path}`)] : [];
+  const blocked = [...await publicationBlocks(units), ...(!force ? [...drift.map(d => `hand edit detected: ${d.path} (${d.unit})`), ...conflicts.map(c => `${c.reason}: ${c.path}`)] : [])];
   return {id: crypto.randomUUID(), key, harness, home: toPosix(path.resolve(home)), kind: kind ?? (target?.stack?.length ? 'switch' : 'install'),
     stateVersion: stackIds(target), recipe: recipe && {key: recipe.key, id: recipe.id, name: recipe.name, version: recipe.version, revision: recipe.revision,
-      origin: recipe.origin, optionValues: recipe.optionValues ?? {}}, units, files, drift, conflicts, notes, blocked, force};
+      origin: recipe.origin, optionValues: recipe.optionValues ?? {}}, units, files, drift, conflicts, notes: [...notes, RETENTION_LIMIT, RESTORE_LIMIT], blocked, force};
 }
 export function describe(unit) {
   if (unit.type === 'file') return 'managed file';
@@ -238,6 +244,19 @@ export function describe(unit) {
   if (unit.type === 'jsonKey') return `JSON key ${unit.pointer.join('.')}`;
   return `${unit.type === 'yamlArrayItem' ? 'YAML' : 'JSON'} ${unit.pointer.join('.')} ${unit.type === 'jsonArrayRecord' ? 'record' : 'item'} ${JSON.stringify(unit.value)}`;
 }
+
+async function publicationBlocks(units) {
+  const dirs = new Set(), blocked = [];
+  for (const unit of units) {
+    const dir = path.dirname(path.resolve(unit.path));
+    if (dirs.has(dir)) continue;
+    dirs.add(dir);
+    const reason = await probeHardlinks(unit.path, unit.boundary);
+    if (reason) blocked.push(reason);
+  }
+  return blocked;
+}
+export const RESTORE_LIMIT = '若探测后硬链接能力丢失，恢复会检查目标不存在后 rename；检查与 rename 之间被外部重新创建的目标无法原子保护。If hard-link support disappears after preview, recovery checks absence then renames; a target recreated between that check and rename cannot be protected atomically.';
 
 // Presentation only. Integrity comparisons below always use real bytes.
 const SECRET = /((?:["']?)(?:authorization|proxy-authorization|x-api-key|api[_-]?key|set-cookie|cookie|auth|[\w.-]*(?:token|secret|password))["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'[^']*'|[^\r\n,}]+)/gi;
@@ -304,7 +323,8 @@ async function commitFiles(store, rows, state, backupDir, beforeSave, cleanupDir
   const dirs = await missingDirs(rows), created = [], id = crypto.randomUUID();
   const files = rows.filter(row => !equalBytes(row.before, row.after)).map((row, i) => ({path: row.path, boundary: row.boundary,
     before: enc(row.before), after: enc(row.after), ...transactionPaths(row.path, id, i, backupDir)}));
-  const replacedVersions = files.filter(row => row.before !== null).map(row => ({path: toPosix(row.path), saved: toPosix(row.archive)}));
+  releaseCarrierReferences(state, files.map(row => row.path));
+  const replacedVersions = files.filter(row => row.before !== null).map(row => ({path: toPosix(row.path), saved: toPosix(row.archive), hash: sha256(dec(row.before))}));
   if (replacedVersions.length) (state.replacedVersions ??= []).push({backup: backupDir, files: replacedVersions});
   const journal = {id, backup: backupDir, backupBoundary: await captureBoundary(backupDir), stateAfter: enc(stateBytes(state)), missingDirs: dirs,
     cleanupDirs: [...new Set(cleanupDirs)].sort((a, b) => b.length - a.length), files, originals};
@@ -387,7 +407,8 @@ export async function planUndo(store, harness, home, {all = false, force = false
   const units = ops.flatMap(op => op.units.map(deserialize).reverse()).map(unit => ({...unit, boundary: unit.boundary ?? path.resolve(home)}));
   return {key, harness, home: toPosix(path.resolve(home)), kind: all ? 'uninstall' : 'rollback', ops: ops.map(op => op.id),
     restores: all ? null : target.stack.at(-2)?.recipe ?? null, files: await previewFiles(units, 'before'), drift,
-    blocked: !force ? drift.map(d => `hand edit detected: ${d.path} (${d.unit})`) : [], force};
+    notes: [RETENTION_LIMIT, RESTORE_LIMIT],
+    blocked: [...await publicationBlocks(units), ...(!force ? drift.map(d => `hand edit detected: ${d.path} (${d.unit})`) : [])], force};
 }
 export async function applyUndo(store, planned) {
   if (planned.blocked.length) throw new Error(`Blocked:\n  ${planned.blocked.join('\n  ')}`);
@@ -431,8 +452,8 @@ export async function planRestoreOriginal(store, harness, home, {force = false} 
     return {id: crypto.randomUUID(), key, harness, home: toPosix(path.resolve(home)), kind: 'restore-original', units,
       stateVersion: stackIds(target), manifestVersion: sha256(await readFile(original.manifest)),
       files: await previewFiles(units, 'after'), drift, force,
-      notes: ['Restores complete original files and removes every recipe-switch operation for this target. Unrelated changes in these files also require force and are backed up first.'],
-      blocked: force ? [] : drift.map(row => `hand edit detected: ${row.path} (${row.unit})`)};
+      notes: ['Restores complete original files and removes every recipe-switch operation for this target. Unrelated changes in these files also require force and are backed up first.', RETENTION_LIMIT, RESTORE_LIMIT],
+      blocked: [...await publicationBlocks(units), ...(!force ? drift.map(row => `hand edit detected: ${row.path} (${row.unit})`) : [])]};
   });
 }
 export async function applyRestoreOriginal(store, planned) {

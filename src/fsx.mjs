@@ -60,25 +60,50 @@ async function checkedBytes(file) {
   return bytes;
 }
 
-/** R20: exclusive publication on filesystems with or without hardlinks. */
-export async function publishExclusive(source, file) {
-  try { await fs.link(source, file); }
-  catch (error) {
-    if (!['ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EPERM', 'EXDEV', 'EINVAL'].includes(error.code)) throw error;
-    await fs.copyFile(source, file, fs.constants.COPYFILE_EXCL);
+const unsupportedLink = error => ['ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EPERM', 'EXDEV', 'EINVAL'].includes(error.code);
+
+/** R23: only a hardlink publishes a complete file atomically without replacing. */
+export async function publishExclusive(source, file) { await fs.link(source, file); }
+
+/** Preview probes the actual destination directory and leaves no persistent files. */
+export async function probeHardlinks(file, boundary) {
+  if (boundary) await assertBoundary(file, boundary);
+  const dir = path.dirname(file), created = await mkdirp(dir), id = crypto.randomUUID();
+  const source = path.join(dir, `.recipe-switch-probe-${id}.tmp`), linked = source + '.link';
+  let ownSource = false, ownLink = false;
+  try {
+    if (boundary) await assertBoundary(source, boundary);
+    await fs.writeFile(source, Buffer.alloc(0), {flag: 'wx'}); ownSource = true;
+    await fs.link(source, linked); ownLink = true;
+    return null;
+  } catch (error) {
+    const reason = unsupportedLink(error)
+      ? '该位置的文件系统不支持硬链接（常见于 FAT/exFAT/部分网络盘），recipe-switch 无法保证安全写入。This location’s filesystem does not support hard links (common on FAT/exFAT and some network drives); recipe-switch cannot guarantee safe writes.'
+      : '无法完成硬链接安全探测；请检查目录访问权限。Could not complete the hard-link safety probe; check directory access permissions.';
+    return `${reason} ${toPosix(dir)} (${error.code ?? error.message})`;
+  } finally {
+    if (ownLink) await fs.unlink(linked);
+    if (ownSource) await fs.unlink(source);
+    for (const item of created.reverse()) await rmdirIfEmpty(item);
   }
 }
 
 /** Restore without replacing a newer destination. Transactions retain the inode. */
-export async function restoreDisplaced(file, displaced, boundary, {retain = false, sourceBoundary = boundary} = {}) {
+export async function restoreDisplaced(file, displaced, boundary, {sourceBoundary = boundary} = {}) {
   if (boundary) await assertBoundary(file, boundary);
   if (sourceBoundary) await assertBoundary(displaced, sourceBoundary);
+  const collision = () => new Error(`Changed during operation; newer file kept at ${toPosix(file)}; displaced version kept at ${toPosix(displaced)}`);
   try { await publishExclusive(displaced, file); }
   catch (error) {
-    if (error.code === 'EEXIST') throw new Error(`Changed during operation; newer file kept at ${toPosix(file)}; displaced version kept at ${toPosix(displaced)}`);
-    throw error;
+    if (error.code === 'EEXIST') throw collision();
+    if (!unsupportedLink(error)) throw error;
+    // Rare capability loss after preview: guarded rename, not an atomic noreplace.
+    // The accepted boundary excludes a target recreated between this check and rename.
+    if (await exists(file)) throw collision();
+    await fs.rename(displaced, file);
+    return;
   }
-  if (!retain) await fs.unlink(displaced);
+  await fs.unlink(displaced);
 }
 
 /** Flush a file before publishing its name (journals must precede target moves). */

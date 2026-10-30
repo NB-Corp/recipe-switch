@@ -28,7 +28,7 @@ export async function originalBytes(store, entry) {
     throw new Error(`Original snapshot is missing or corrupt: ${entry.path}`);
   return bytes;
 }
-async function putBlob(store, bytes) {
+export async function putBlob(store, bytes) {
   const hash = sha256(bytes), dir = path.join(store.home, 'blobs'), file = path.join(dir, hash);
   await assertBoundary(file, await captureBoundary(store.home));
   await fs.mkdir(dir, {recursive: true});
@@ -81,6 +81,14 @@ export async function collectOrphanBlobs(store) {
     }
   }
   await walk(root);
+  const backups = path.join(store.home, 'backups');
+  for (const entry of await fs.readdir(backups, {withFileTypes: true}).catch(error => { if (error.code === 'ENOENT') return []; throw error; })) {
+    if (!entry.isDirectory()) continue;
+    const file = path.join(backups, entry.name, 'index.json'); await assertBoundary(file, boundary);
+    const bytes = await readFile(file);
+    if (bytes !== null) for (const row of JSON.parse(bytes.toString('utf8')))
+      for (const version of row.laterVersions ?? []) referenced.add(version.hash);
+  }
   const dir = path.join(store.home, 'blobs'); await assertBoundary(dir, boundary);
   const entries = await fs.readdir(dir).catch(error => { if (error.code === 'ENOENT') return []; throw error; });
   for (const name of entries) if (/^[a-f0-9]{64}$/.test(name) && !referenced.has(name)) {
