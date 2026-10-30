@@ -197,7 +197,9 @@ details.faq-item .faq-body p { margin: 0 0 8px; }
 .prose pre code { background: none; padding: 0; color: inherit; font-size: 12.5px; line-height: 1.55; }
 .prose img { max-width: 100%; height: auto; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--card); margin: 6px 0 14px; }
 .prose table { width: 100%; border-collapse: separate; border-spacing: 0; margin: 0 0 18px; font-size: 13.5px; background: var(--card); border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; display: block; overflow-x: auto; }
+.prose table table { width: max-content; min-width: 100%; }
 .prose th, .prose td { padding: 9px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+.prose td code, .prose th code { overflow-wrap: normal; word-break: keep-all; }
 .prose th { font: 600 11.5px var(--display); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); background: var(--paper); }
 .prose tr:last-child td { border-bottom: 0; }
 .prose hr { border: 0; border-top: 1px solid var(--line); margin: 34px 0; }
@@ -227,6 +229,8 @@ details.faq-item .faq-body p { margin: 0 0 8px; }
 }
 @media (max-width: 560px) {
   body { font-size: 15px; }
+  .prose table table { min-width: 560px; }
+  .prose td:first-child, .prose th:first-child { min-width: 92px; }
   .hero { padding: 48px 0 40px; }
   .site-nav { gap: 12px; }
   .site-nav a { font-size: 13px; }
