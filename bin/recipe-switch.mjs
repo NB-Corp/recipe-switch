@@ -14,6 +14,8 @@ const HELP = `recipe-switch — install, switch and roll back behavior recipes a
   recipe-switch switch   <harness> <recipe> [--home DIR] [options] [--yes]
   recipe-switch rollback <harness> [--home DIR] [--yes]   Undo the latest install/switch
   recipe-switch uninstall <harness> [--home DIR] [--yes]  Undo everything; restore the original state
+  recipe-switch originals <harness> [--home DIR] [--json]  List first-touch original file snapshots
+  recipe-switch restore-original <harness> [--home DIR] [--yes] [--force]  Restore whole original files
   recipe-switch history  <harness> [--home DIR]
   recipe-switch ui [--port 4517] [--no-open]          Local web UI on 127.0.0.1
 
@@ -61,6 +63,7 @@ function recipeOptions(flags) {
 function printPlan(planned) {
   const title = planned.kind === 'rollback' ? `Rollback ${planned.harness}${planned.restores ? ` → ${planned.restores.key}` : ' → original state'}`
     : planned.kind === 'uninstall' ? `Uninstall ${planned.harness} → original state`
+    : planned.kind === 'restore-original' ? `Restore original ${planned.harness} → complete first-touch file snapshots`
     : `${planned.kind === 'switch' ? 'Switch' : 'Install'} ${planned.harness}: ${planned.current ? planned.current.key + ' → ' : ''}${planned.recipe.key}`;
   console.log(`${title}\nTarget: ${planned.home}`);
   for (const file of planned.files) console.log(`\n${file.action.toUpperCase()} ${file.path}  (+${file.added} -${file.removed})\n${file.diff.trimEnd()}`);
@@ -113,6 +116,28 @@ export async function main(argv = process.argv.slice(2), service = new Service()
     const now = await service.config();
     console.log(`gpt-with-taste: ${now.gwt}\nsources:\n${now.sources.map(item => `  ${item}`).join('\n')}`);
     return;
+  }
+  if (command === 'originals') {
+    const [harness] = rest;
+    if (!harness) throw new Error('Usage: recipe-switch originals <harness> [--home DIR]');
+    const original = await service.originals({harness, home: flags.home});
+    if (flags.json) { console.log(JSON.stringify(original, null, 2)); return original; }
+    if (!original) { console.log('No original snapshot for this target.'); return null; }
+    console.log(`Original backup: ${original.capturedAt}\nManifest: ${original.manifest}`);
+    for (const file of original.files) console.log(`${file.path}\n  ${file.existed ? `${file.size} bytes  sha256 ${file.hash}  mtime ${file.mtime ?? 'unknown'}` : 'did not exist; no bytes stored'}`);
+    return original;
+  }
+  if (command === 'restore-original') {
+    const [harness] = rest;
+    if (!harness) throw new Error('Usage: recipe-switch restore-original <harness> [--home DIR] [--yes] [--force]');
+    const planned = await service.previewOriginal({harness, home: flags.home, force: flags.force});
+    printPlan(planned);
+    if (!flags.yes) { console.log('\nDry run. Re-run with --yes to apply.'); return planned; }
+    if (planned.blocked.length) { process.exitCode = 2; return planned; }
+    const result = await service.apply(planned.id);
+    console.log(`\n${result.message}\nBackup: ${result.backup}`);
+    for (const version of result.replacedVersions ?? []) console.log(`被替换的版本保存在 ${version.saved}`);
+    return result;
   }
   if (['install', 'switch'].includes(command)) {
     const [harness, recipe] = rest;

@@ -1,7 +1,8 @@
 // Service layer shared by the CLI and the local web server.
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {Store, stateHome, plan, applyPlan, planUndo, applyUndo, status, targetKey} from './engine.mjs';
+import {Store, stateHome, plan, applyPlan, planUndo, applyUndo, planRestoreOriginal, applyRestoreOriginal, status, targetKey, redact} from './engine.mjs';
+import {readOriginals, originalBytes} from './originals.mjs';
 import {loadCatalog} from './sources.mjs';
 import {readJson} from './drivers/common.mjs';
 import {writeFile, toPosix, exists} from './fsx.mjs';
@@ -83,7 +84,8 @@ export class Service {
       if (target.missing) { Object.assign(row, {present: await exists(target.home), detail: 'no profiles found', live: [], foreign: [], managed: {installed: false, history: [], drift: []}}); rows.push(row); continue; }
       try {
         const found = await driver.detect(target.home, {gwtRoot: gwt, env: this.env});
-        Object.assign(row, found, {managed: await status(this.store, driver.id, target.home)});
+        Object.assign(row, found, {managed: await status(this.store, driver.id, target.home),
+          originals: await this.originals({harness: driver.id, home: target.home})});
         if (driver.choices) row.choices = await driver.choices(target.home);
       } catch (error) { Object.assign(row, {present: false, error: error.message, live: [], foreign: [], managed: {installed: false, history: [], drift: []}}); }
       rows.push(row);
@@ -139,6 +141,7 @@ export class Service {
     if (!planned) throw new Error('Unknown or expired preview; preview again.');
     if (['rollback', 'uninstall'].includes(planned.kind)) return this.applyUndo(planId);
     this.plans.delete(planId);
+    if (planned.kind === 'restore-original') return applyRestoreOriginal(this.store, planned);
     const result = await applyPlan(this.store, planned);
     return {...result, launch: planned.launch, notes: planned.notes};
   }
@@ -147,6 +150,33 @@ export class Service {
     const {driver, home: target} = await this.resolveTarget(harness, home);
     const planned = await planUndo(this.store, driver.id, target, {all, force});
     planned.id = `undo-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+    this.plans.set(planned.id, planned);
+    return planned;
+  }
+
+  async originals({harness, home}) {
+    const {driver, home: target} = await this.resolveTarget(harness, home);
+    return this.store.transaction(async () => {
+      const original = await readOriginals(this.store, driver.id, target);
+      if (!original) return null;
+      return {harness: driver.id, home: original.home, capturedAt: original.capturedAt, manifest: original.manifest,
+        files: original.files.map(({path, existed, hash, size, mtime, capturedAt}, id) => ({id, path, existed, hash, size, mtime, capturedAt}))};
+    });
+  }
+  async originalText({harness, home, id}) {
+    const {driver, home: target} = await this.resolveTarget(harness, home);
+    return this.store.transaction(async () => {
+      const original = await readOriginals(this.store, driver.id, target), entry = original?.files[id];
+      if (!Number.isInteger(id) || id < 0 || !entry) throw new Error('Unknown original file.');
+      const bytes = await originalBytes(this.store, entry);
+      let text = null;
+      if (bytes !== null && !bytes.includes(0)) try { text = redact(new TextDecoder('utf-8', {fatal: true}).decode(bytes)); } catch {}
+      return {path: entry.path, existed: entry.existed, size: entry.size, text, binary: bytes !== null && text === null};
+    });
+  }
+  async previewOriginal({harness, home, force = false}) {
+    const {driver, home: target} = await this.resolveTarget(harness, home);
+    const planned = await planRestoreOriginal(this.store, driver.id, target, {force});
     this.plans.set(planned.id, planned);
     return planned;
   }

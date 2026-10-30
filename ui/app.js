@@ -15,6 +15,9 @@ const STRINGS = {
     from: '现在', to: '换成', original: '工具原样', nothingToWrite: '没有需要写入的改动。', files: n => `${n} 个文件`,
     blockedTitle: '先处理这些', warnTitle: '注意', notesTitle: '说明', launchTitle: '以后用这条命令启动',
     resultInstalled: '已装上', resultSwitched: '已切换', resultRolledBack: '已撤回', resultRestored: '已还原', backupAt: '备份', replacedAt: '被替换的版本保存在',
+    originalsTitle: '原始备份', restoreOriginal: '恢复到装之前', resultOriginal: '已恢复到装之前', viewOriginal: '查看原文',
+    originallyAbsent: '原来不存在 · 不存储字节', originalPrivate: '原始文件内容（敏感值已隐藏）', originalBinary: '二进制文件；确认恢复后会还原完整字节。',
+    originalRestoreHint: '将撤下全部配方，恢复这些文件的完整原始字节；文件内其他手改也会被替换。检测到手改会先阻断，强制恢复会先备份当前版本。',
     defaultOn: '默认开', defaultOff: '默认关', affects: '影响', viewText: '查看文本', noOptions: '这份配方没有可调选项。',
     texts: {main: '主代理', sub: '子代理', independent: '独立', userSteer: '用户提醒', subSteer: '子代理提醒', agentSteer: '结果提醒'},
     empty: '无', sourcesTitle: '配方来源', sourcesHint: '每行一个目录或 recipe.toml。按顺序扫描。',
@@ -39,6 +42,9 @@ const STRINGS = {
     from: 'Now', to: 'Becomes', original: 'Tool default', nothingToWrite: 'Nothing to write.', files: n => `${n} file${n === 1 ? '' : 's'}`,
     blockedTitle: 'Resolve first', warnTitle: 'Heads-up', notesTitle: 'Notes', launchTitle: 'Start sessions with',
     resultInstalled: 'Installed', resultSwitched: 'Switched', resultRolledBack: 'Undone', resultRestored: 'Restored', backupAt: 'Backup', replacedAt: 'Replaced version saved at',
+    originalsTitle: 'Original backup', restoreOriginal: 'Restore to before install', resultOriginal: 'Original files restored', viewOriginal: 'View original',
+    originallyAbsent: 'Did not exist · no bytes stored', originalPrivate: 'Original file content (sensitive values hidden)', originalBinary: 'Binary file; restoring will recover its complete bytes.',
+    originalRestoreHint: 'Removes every recipe and restores complete original file bytes, including unrelated edits in these files. Hand edits block restoration; a forced restore backs up the current version first.',
     defaultOn: 'on by default', defaultOff: 'off by default', affects: 'Affects', viewText: 'View text', noOptions: 'This recipe has no options.',
     texts: {main: 'Main', sub: 'Subagent', independent: 'Independent', userSteer: 'User reminder', subSteer: 'Sub reminder', agentSteer: 'Result reminder'},
     empty: 'none', sourcesTitle: 'Recipe sources', sourcesHint: 'One directory or recipe.toml per line, scanned in order.',
@@ -181,9 +187,31 @@ function toolRow(target) {
     target.error ? note('bad', t('loadFailed'), [target.error]) : null,
     managed.history?.length ? el('details', {}, el('summary', {class: 'group-note'}, `${t('history')} · ${managed.history.length}`),
       el('div', {class: 'dim-list', style: 'margin-top:6px'}, managed.history.map(h => el('div', {class: 'dim'}, el('b', {}, h.kind), `${h.recipe ?? ''} · ${fmtTime(h.at)}`)))) : null,
+    target.originals ? originalsBlock(target) : null,
     actions);
   row.append(detail);
   return row;
+}
+function originalsBlock(target) {
+  const original = target.originals;
+  return el('details', {'data-originals': target.harness},
+    el('summary', {class: 'group-note'}, `${t('originalsTitle')} · ${fmtTime(original.capturedAt)}`),
+    el('div', {class: 'dim-list', style: 'margin-top:10px'}, original.files.map(file => el('div', {class: 'dim', style: 'flex-wrap:wrap'},
+      el('span', {class: 'mono', style: 'flex:1;min-width:180px;overflow-wrap:anywhere'}, file.path),
+      el('span', {}, file.existed ? `${file.size} B` : t('originallyAbsent')),
+      file.existed ? el('button', {class: 'btn btn-ghost btn-sm', onclick: () => viewOriginal(target, file)}, t('viewOriginal')) : null))),
+    el('div', {style: 'margin-top:12px'}, el('button', {class: 'btn btn-danger', onclick: () => undoFlow(target, true, true)}, t('restoreOriginal'))));
+}
+async function viewOriginal(target, file) {
+  try {
+    const query = new URLSearchParams({harness: target.harness, home: target.home, id: String(file.id)});
+    const original = await api(`/api/original-file?${query}`);
+    const done = el('button', {class: 'btn btn-primary'}, t('done'));
+    const {close} = openSheet({kicker: t('originalsTitle'), title: t('viewOriginal'), sub: original.path,
+      body: sheetBody(el('p', {class: 'group-note'}, t('originalPrivate')),
+        el('pre', {class: 'prose'}, original.existed ? original.binary ? t('originalBinary') : original.text : t('originallyAbsent'))), foot: sheetFoot(done)});
+    done.addEventListener('click', close);
+  } catch (error) { toast(error.message, true); }
 }
 function renderTools() {
   const host = document.getElementById('screen-tools');
@@ -384,18 +412,19 @@ function configure(target, recipe, {recipeOptions} = {}) {
   run();
 }
 // ---------------------------------------------------------------- rollback / restore
-async function undoFlow(target, all) {
-  const apply = el('button', {class: `btn ${all ? 'btn-danger' : 'btn-primary'}`, disabled: true}, all ? t('uninstall') : t('rollback'));
+async function undoFlow(target, all, original = false) {
+  const action = original ? t('restoreOriginal') : all ? t('uninstall') : t('rollback');
+  const apply = el('button', {class: `btn ${all ? 'btn-danger' : 'btn-primary'}`, disabled: true}, action);
   const cancel = el('button', {class: 'btn'}, t('cancel'));
   const errorLine = el('div', {class: 'foot-error', hidden: true});
   const host = el('div', {style: 'display:grid;gap:12px'}, el('div', {class: 'skel', style: 'min-height:140px'}));
-  const {close} = openSheet({kicker: target.name, title: all ? t('uninstall') : t('rollback'), sub: target.home,
-    body: sheetBody(host), foot: el('div', {}, errorLine, sheetFoot(cancel, apply))});
+  const {close} = openSheet({kicker: target.name, title: action, sub: target.home,
+    body: sheetBody(original ? note('warn', t('originalsTitle'), [t('originalRestoreHint')]) : null, host), foot: el('div', {}, errorLine, sheetFoot(cancel, apply))});
   cancel.addEventListener('click', close);
   let planned;
   const load = async force => {
     try {
-      planned = await api('/api/preview-undo', {method: 'POST', body: {harness: target.harness, home: target.home, all, force}});
+      planned = await api(original ? '/api/preview-original' : '/api/preview-undo', {method: 'POST', body: {harness: target.harness, home: target.home, all, force}});
       const now = target.managed?.recipe;
       host.textContent = '';
       host.append(...planNodes(planned, now ? `${now.name} v${now.version}` : '—', planned.restores ? `${planned.restores.name} v${planned.restores.version}` : t('original'),
@@ -409,8 +438,8 @@ async function undoFlow(target, all) {
     try {
       const result = await api('/api/apply', {method: 'POST', body: {planId: planned.id}});
       close(); await refresh();
-      showResult(all ? t('resultRestored') : t('resultRolledBack'), result);
-    } catch (error) { errorLine.hidden = false; errorLine.textContent = error.message; apply.disabled = false; apply.textContent = all ? t('uninstall') : t('rollback'); }
+      showResult(original ? t('resultOriginal') : all ? t('resultRestored') : t('resultRolledBack'), result);
+    } catch (error) { errorLine.hidden = false; errorLine.textContent = error.message; apply.disabled = false; apply.textContent = action; }
   });
 }
 

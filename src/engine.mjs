@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import {readFile, writeFile, restoreDisplaced, rmdirIfEmpty, equalBytes, toPosix, sha256, assertBoundary, captureBoundary, withLock, exists} from './fsx.mjs';
 import {inspect, inspectBytes, fingerprintOf, render, recordLayout, identity, ABSENT} from './units.mjs';
 import {unifiedDiff} from './diff.mjs';
+import {prepareOriginals, publishOriginals, readOriginals, originalBytes, collectOrphanBlobs} from './originals.mjs';
 
 export const MARK = 'managed by recipe-switch';
 export const stateHome = (env = process.env) => path.resolve(env.RECIPE_SWITCH_HOME || path.join(os.homedir(), '.recipe-switch'));
@@ -140,6 +141,7 @@ export class Store {
       await cleanTemp(row, row, dec(row.after), journal);
       if (row.recovery) await cleanTemp(row, row.recovery, dec(row.recovery.before), journal);
     }
+    if (committed) await publishOriginals(this, journal.originals);
     await retainedIndex(journal);
     for (const dir of committed ? journal.cleanupDirs ?? [] : [...journal.missingDirs].reverse()) await rmdirIfEmpty(dir);
     await writeFile(this.pending, null, {durable: true});
@@ -298,14 +300,14 @@ async function missingDirs(rows) {
   }
   return [...dirs].sort((a, b) => a.length - b.length);
 }
-async function commitFiles(store, rows, state, backupDir, beforeSave, cleanupDirs = []) {
+async function commitFiles(store, rows, state, backupDir, beforeSave, cleanupDirs = [], originals = null) {
   const dirs = await missingDirs(rows), created = [], id = crypto.randomUUID();
   const files = rows.filter(row => !equalBytes(row.before, row.after)).map((row, i) => ({path: row.path, boundary: row.boundary,
     before: enc(row.before), after: enc(row.after), ...transactionPaths(row.path, id, i, backupDir)}));
   const replacedVersions = files.filter(row => row.before !== null).map(row => ({path: toPosix(row.path), saved: toPosix(row.archive)}));
   if (replacedVersions.length) (state.replacedVersions ??= []).push({backup: backupDir, files: replacedVersions});
   const journal = {id, backup: backupDir, backupBoundary: await captureBoundary(backupDir), stateAfter: enc(stateBytes(state)), missingDirs: dirs,
-    cleanupDirs: [...new Set(cleanupDirs)].sort((a, b) => b.length - a.length), files};
+    cleanupDirs: [...new Set(cleanupDirs)].sort((a, b) => b.length - a.length), files, originals};
   await store.journal(journal);
   try {
     for (const row of files) {
@@ -331,6 +333,24 @@ async function commitFiles(store, rows, state, backupDir, beforeSave, cleanupDir
   return replacedVersions;
 }
 
+async function originalCandidates(target, rows) {
+  const candidates = new Map(rows.map(row => [path.resolve(row.path), {path: row.path, bytes: row.before, boundary: row.boundary}]));
+  const units = (target?.stack ?? []).flatMap(op => op.units.map(deserialize));
+  for (const unit of units) {
+    const file = path.resolve(unit.path);
+    if (!candidates.has(file)) {
+      await assertBoundary(file, unit.boundary ?? target.home);
+      candidates.set(file, {path: file, bytes: await readFile(file), boundary: unit.boundary ?? target.home});
+    }
+  }
+  // Adopt older installations using their existing undo records, not managed bytes.
+  for (const unit of [...units].reverse()) {
+    const row = candidates.get(path.resolve(unit.path));
+    row.bytes = render(unit, 'before', row.bytes); row.reconstructed = true;
+  }
+  return [...candidates.values()];
+}
+
 export async function applyPlan(store, planned) {
   if (planned.blocked.length) throw new Error(`Plan is blocked:\n  ${planned.blocked.join('\n  ')}`);
   return store.transaction(async state => {
@@ -342,13 +362,14 @@ export async function applyPlan(store, planned) {
     const opId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${planned.id.slice(0, 8)}`;
     const backupDir = await backup(store, opId, rows);
     const target = state.targets[planned.key] ??= {harness: planned.harness, home: planned.home, stack: []};
+    const originals = await prepareOriginals(store, planned.harness, planned.home, await originalCandidates(target, rows));
     const knownDirs = target.stack.flatMap(op => op.createdDirs ?? []);
     const op = {id: opId, kind: planned.kind, at: new Date().toISOString(), recipe: planned.recipe, options: planned.options,
       backup: backupDir, forced: planned.force || undefined, units: units.map(serialize)};
     target.stack.push(op);
     const replacedVersions = await commitFiles(store, rows, state, backupDir, (created, replaced) => {
       op.createdDirs = created.map(toPosix); op.replacedVersions = replaced;
-    }, knownDirs);
+    }, knownDirs, originals);
     return {changed: true, op: opId, backup: backupDir, replacedVersions, message: `${planned.kind === 'switch' ? 'Switched' : 'Installed'} ${planned.recipe?.key ?? ''}`};
   });
 }
@@ -385,6 +406,55 @@ export async function applyUndo(store, planned) {
       : planned.restores ? `Rolled back to ${planned.restores.key}` : 'Rolled back; original state restored.'};
   });
 }
+export async function planRestoreOriginal(store, harness, home, {force = false} = {}) {
+  return store.transaction(async state => {
+    const original = await readOriginals(store, harness, home);
+    if (!original) throw new Error('No original snapshot for this target.');
+    const key = targetKey(harness, home), target = state.targets[key], files = new Map();
+    for (const entry of original.files) {
+      await assertBoundary(entry.path, entry.boundary ?? home);
+      const bytes = await originalBytes(store, entry);
+      files.set(path.resolve(entry.path), {entry, original: bytes, expected: bytes});
+    }
+    for (const op of target?.stack ?? []) for (const raw of op.units) {
+      const unit = deserialize(raw), file = files.get(path.resolve(unit.path));
+      if (!file) throw new Error(`Original snapshot does not cover ${toPosix(unit.path)}`);
+      file.expected = unit.retirement ? render(deserialize(unit.retirement), 'before', file.expected) : render(unit, 'after', file.expected);
+    }
+    const units = [], drift = [];
+    for (const {entry, original: bytes, expected} of files.values()) {
+      const current = await readFile(entry.path), fp = inspectBytes({type: 'file'}, current).fp;
+      if (!equalBytes(current, expected)) drift.push({path: entry.path, unit: 'original whole-file snapshot', live: fp});
+      units.push({type: 'file', path: entry.path, boundary: entry.boundary ?? await captureBoundary(home),
+        beforeBytes: current, afterBytes: bytes, beforeFingerprint: fp});
+    }
+    return {id: crypto.randomUUID(), key, harness, home: toPosix(path.resolve(home)), kind: 'restore-original', units,
+      stateVersion: stackIds(target), manifestVersion: sha256(await readFile(original.manifest)),
+      files: await previewFiles(units, 'after'), drift, force,
+      notes: ['Restores complete original files and removes every recipe-switch operation for this target. Unrelated changes in these files also require force and are backed up first.'],
+      blocked: force ? [] : drift.map(row => `hand edit detected: ${row.path} (${row.unit})`)};
+  });
+}
+export async function applyRestoreOriginal(store, planned) {
+  if (planned.blocked.length) throw new Error(`Blocked:\n  ${planned.blocked.join('\n  ')}`);
+  return store.transaction(async state => {
+    const target = state.targets[planned.key], original = await readOriginals(store, planned.harness, planned.home);
+    if (JSON.stringify(stackIds(target)) !== JSON.stringify(planned.stateVersion) || !original || sha256(await readFile(original.manifest)) !== planned.manifestVersion)
+      throw new Error('Installation state changed since the preview; preview again.');
+    // Revalidate blob integrity before any mutation, including a forced restore.
+    for (const entry of original.files) await originalBytes(store, entry);
+    const rows = await prepare(planned.units.map(unit => ({...unit})), 'after', 'before');
+    checkPreview(rows, planned);
+    const backupDir = await backup(store, `${new Date().toISOString().replace(/[:.]/g, '-')}-${crypto.randomUUID()}`, rows);
+    const dirs = (target?.stack ?? []).flatMap(op => op.createdDirs ?? []);
+    delete state.targets[planned.key];
+    const replacedVersions = await commitFiles(store, rows, state, backupDir, undefined, dirs);
+    const notes = [];
+    try { await collectOrphanBlobs(store); } catch (error) { notes.push(`Original files restored; unused blob cleanup needs attention: ${error.message}`); }
+    return {changed: true, backup: backupDir, replacedVersions, notes, message: 'Restored original snapshot; recipe-switch is fully uninstalled from this target.'};
+  });
+}
+
 export async function status(store, harness, home) {
   const target = await store.target(targetKey(harness, home));
   if (!target?.stack?.length) return {installed: false, drift: [], history: []};
