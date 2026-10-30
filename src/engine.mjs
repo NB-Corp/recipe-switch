@@ -311,7 +311,7 @@ export async function status(store, harness, home) {
     if (live !== fingerprintOf(latest, 'after')) drift.push({path: toPosix(latest.path), unit: describe(latest), state: live === ABSENT ? 'missing' : 'edited'});
   }
   const top = target.stack.at(-1);
-  return {installed: true, recipe: top.recipe, since: top.at, drift,
+  return {installed: true, recipe: top.recipe, options: top.options ?? {}, since: top.at, drift,
     history: target.stack.map(op => ({id: op.id, kind: op.kind, at: op.at, recipe: op.recipe?.key, backup: op.backup})).reverse()};
 }
 

@@ -20,7 +20,54 @@ export async function makeSandbox(dir) {
   await put('claude/settings.json', '{\n  "model": "opus"\n}\n');
   await put('grok/rules/engineering.md', '# My engineering rules\n');
   await put('opencode/opencode.json', '{\n  "$schema": "https://opencode.ai/config.json",\n  "model": "axon/gpt-5.5"\n}\n');
+  // A second recipe with options, so the panel's switches have something to show.
+  await put('recipes/calm-reviewer/recipe.toml', DEMO_RECIPE);
+  await put('recipes/calm-reviewer/main.md', '# Calm Reviewer\n\nRead the whole change before judging it.\n\n## Findings\n\nReport concrete defects with file and line.\n\n## Tone\n\nPlain and brief.\n');
+  await put('recipes/calm-reviewer/sub.md', '# Calm Reviewer — Subagent\n\nFinish the assigned review slice and hand back findings.\n');
+  await put('recipes/calm-reviewer/security.md', '## Security pass\n\nCheck input validation, secrets and permission changes.\n');
+  const gwt = process.env.RECIPE_SWITCH_GWT || path.resolve(ROOT, '..', 'gpt-with-taste');
+  await put('state/config.json', JSON.stringify({gwt, sources: [gwt, path.join(dir, 'recipes')]}, null, 2) + '\n');
   return sandboxEnv(dir);
+}
+
+const DEMO_RECIPE = `schema_version = 1
+id = "calm-reviewer"
+name = "冷静评审 Calm Reviewer"
+version = "0.2.1"
+description = "Review-first behavior with optional security pass."
+
+[options.security]
+name = "Security pass"
+description = "Adds a security checklist before Tone."
+default = false
+
+[[options.security.patch]]
+slot = "main.system"
+section = "Tone"
+action = "before"
+content = { file = "security.md" }
+
+[options.cite]
+name = "Cite lines"
+description = "Reminds the agent to cite file:line each turn."
+default = true
+append.main.steering = { text = "Cite file:line for every finding." }
+
+[prompts]
+system = { file = "sub.md" }
+steering = { text = "Stay inside the assigned slice." }
+
+[prompts.main]
+system = { file = "main.md" }
+steering = { text = "Keep the review goal in view." }
+`;
+
+export function sandboxEnv(dir) {
+  return {
+    RECIPE_SWITCH_HOME: path.join(dir, 'state'), CODEX_HOME: path.join(dir, 'codex'), KIKI_HOME: path.join(dir, 'kiki'),
+    PI_CODING_AGENT_DIR: path.join(dir, 'pi/agent'), DSH_HOME: path.join(dir, 'dsh'), CLAUDE_CONFIG_DIR: path.join(dir, 'claude'),
+    OMP_CODING_AGENT_DIR: path.join(dir, 'omp/agent'), GROK_HOME: path.join(dir, 'grok'), OPENCODE_CONFIG_DIR: path.join(dir, 'opencode'),
+  };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
@@ -34,12 +81,4 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   const {serve} = await import('../src/server.mjs');
   console.log(`Sandbox: ${dir}${fresh ? ' (created)' : ' (reused; --reset to recreate)'}`);
   await serve({service: new Service({env: process.env, home: env.RECIPE_SWITCH_HOME}), port: Number(flag('--port') ?? 4517), open: !argv.includes('--no-open')});
-}
-
-export function sandboxEnv(dir) {
-  return {
-    RECIPE_SWITCH_HOME: path.join(dir, 'state'), CODEX_HOME: path.join(dir, 'codex'), KIKI_HOME: path.join(dir, 'kiki'),
-    PI_CODING_AGENT_DIR: path.join(dir, 'pi/agent'), DSH_HOME: path.join(dir, 'dsh'), CLAUDE_CONFIG_DIR: path.join(dir, 'claude'),
-    OMP_CODING_AGENT_DIR: path.join(dir, 'omp/agent'), GROK_HOME: path.join(dir, 'grok'), OPENCODE_CONFIG_DIR: path.join(dir, 'opencode'),
-  };
 }
