@@ -1,14 +1,11 @@
 ---
 title: "配方与选项格式（recipe.toml）— recipe-switch 中文文档"
 description: "手把手教你编写和接入 recipe-switch 配方：配置配方来源、理解六个提示词与每轮提醒槽位的继承规则，以及使用 when/unless、prepend/append 和 Markdown 章节 patch 定义复选框选项。"
+layout: doc
+page_id: recipes
+h1: 配方与选项格式（recipe.toml）
+kicker: 编写指南
 ---
-
-# 配方与选项格式（`recipe.toml`）
-
-[首页](index.md) · [快速开始](getting-started.md) · [各工具说明](harnesses.md) · [安全与回滚](safety.md) · **配方与选项格式** · [常见问题 FAQ](faq.md) · [English](../recipes.md)
-
----
-
 ## 什么是配方（Recipe）？
 
 一份**配方**就是一套可移植的 AI 编程工具工作方式。在内部，每份配方在根据你的选项开关展开后，都会生成**六个标准文本槽位**：

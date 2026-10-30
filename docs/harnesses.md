@@ -1,14 +1,11 @@
 ---
 title: "Supported Harnesses & Write Points — recipe-switch"
 description: "Detailed reference of how recipe-switch installs prompts and per-turn steering into OpenAI Codex, Claude Code, Kiki, Pi, DeepSeek Harness, OMP, Grok Build, OpenCode, Kimi Code, Hermes Agent, and OpenClaw."
+layout: doc
+page_id: harnesses
+h1: Supported Harnesses & Write Points
+kicker: Reference
 ---
-
-# Supported Harnesses & Write Points
-
-[Home](index.md) · [Getting Started](getting-started.md) · **Harnesses** · [Safety & Rollback](safety.md) · [Recipes & Options](recipes.md) · [FAQ](faq.md) · [简体中文](zh/harnesses.md)
-
----
-
 `recipe-switch` never uses a one-size-fits-all hack. Each harness driver in `src/drivers/` targets the native instruction slot, extension loader, or hook API of that specific coding tool.
 
  Harnesses fall into three architecture groups:
@@ -49,8 +46,8 @@ description: "Detailed reference of how recipe-switch installs prompts and per-t
   ```
 - **Steering**: User, Sub, and Agent Steer are delivered through the bundled plugin hooks. Later switches rewrite `recipe-switch/` in place.
 
-![Claude Code preview and launch command](screenshots/19-claude-preview.png)
-![Claude Code launch command result](screenshots/20-claude-launch.png)
+![Claude Code preview and launch command]({{ '/screenshots/19-claude-preview.png' | relative_url }})
+![Claude Code launch command result]({{ '/screenshots/20-claude-launch.png' | relative_url }})
 
 ---
 
@@ -64,7 +61,7 @@ description: "Detailed reference of how recipe-switch installs prompts and per-t
 - **Steering**: Full native Kiki Recipe steering across `main`, `sub`, and `independent` branches, plus `agent` and `task` steering sources.
 - **Notes**: New bindings use the recipe immediately; an idle session adopts it after **Rebuild context**. Rolling back or uninstalling restores any previous `recipe = ...` value you had on those models.
 
-![Kiki model binding preview](screenshots/10-kiki-preview.png)
+![Kiki model binding preview]({{ '/screenshots/10-kiki-preview.png' | relative_url }})
 
 ---
 
@@ -81,7 +78,7 @@ description: "Detailed reference of how recipe-switch installs prompts and per-t
   - Inside Pi, you can run `/recipe status`, `/recipe on`, `/recipe off`, `/recipe steer on`, `/recipe steer off`, or `/recipe reset`.
 - **Guards**: Blocks if `settings.json` or `extensions/` already loads a standalone `gpt-with-taste` Pi package/extension, preventing double injection.
 
-![Pi installed card](screenshots/05-pi-installed-card.png)
+![Pi installed card]({{ '/screenshots/05-pi-installed-card.png' | relative_url }})
 
 ---
 
@@ -95,7 +92,7 @@ description: "Detailed reference of how recipe-switch installs prompts and per-t
 - **Steering & Switching**: Registers a system prompt section (`recipe-switch:behavior`) and an `agent/pre-step` hook that injects User, coordinator, and subagent-report/settled steering. Switching recipes rewrites `recipe.json`, which is re-read before each step.
 - **Guards**: Blocks if `dsh-gpt-with-taste` is already in `dsh.profile.bundles`; warns (non-blocking) if `dsh-kiki-recipe` is mounted.
 
-![DeepSeek Harness preview](screenshots/11-dsh-preview.png)
+![DeepSeek Harness preview]({{ '/screenshots/11-dsh-preview.png' | relative_url }})
 
 ---
 
@@ -149,13 +146,14 @@ description: "Detailed reference of how recipe-switch installs prompts and per-t
 - **What `recipe-switch` writes**:
   - `plugins/recipe-switch/{plugin.yaml,__init__.py,recipe.json}`.
   - Adds `recipe-switch` to the `plugins.enabled` block list in `config.yaml`.
-- **AST Capability Probe (No Host Execution)**:
-  - Before installing, `recipe-switch` uses Python (`python` or `py -3`) to parse the host source AST (`hermes_cli/plugins.py`, `run_agent.py`, and files under `agent/`) without importing or executing host code.
-  - **Two checks must both pass**:
-    1. `PluginContext` (including any parent classes inherited within the same module) defines a `register_middleware` method; and
-    2. The request path (`run_agent.py` and related files under `agent/`) actually dispatches `llm_request`.
-  - **When both are confirmed**: Installs both `llm_request` middleware and the `pre_llm_call` hook. `llm_request` appends full Main/Sub prompts to `chat_completions` (`system`/`developer` messages), `anthropic_messages` (`system` blocks), `codex_responses` (`instructions`), and `bedrock_converse` (`system` blocks, keeping trailing `cachePoint` last). Each `session_id` freezes its Main/Sub text on its first request in the running plugin so switching recipes affects new sessions without invalidating in-flight sessions.
-  - **When Python is unavailable, AST parsing fails, or either check is missing**: Automatically strips `provides_middleware: [llm_request]` from `plugin.yaml` and installs per-turn steering (`pre_llm_call`) only. Main/Sub prompts take effect once Hermes is upgraded; the exact downgrade reason is displayed in `status` overview, the UI, and the preview.
+- **Static Capability Check (No Host Execution)**:
+  - Before installing, `recipe-switch` statically inspects the host source (`hermes_cli/plugins.py`, `run_agent.py`, and files under `agent/`) without importing or executing host code. The check is deliberately narrow: it only verifies whether the `PluginContext` class **directly defines `register_middleware`**.
+  - **Confirmed**: Installs both `llm_request` middleware and the `pre_llm_call` hook. `llm_request` appends full Main/Sub prompts to `chat_completions` (`system`/`developer` messages), `anthropic_messages` (`system` blocks), `codex_responses` (`instructions`), and `bedrock_converse` (`system` blocks, keeping trailing `cachePoint` last). Each `session_id` freezes its Main/Sub text on its first request in the running plugin so switching recipes affects new sessions without invalidating in-flight sessions.
+  - **Not confirmed** (no static signal, or the check could not run): Automatically strips `provides_middleware: [llm_request]` from `plugin.yaml` and installs per-turn steering (`pre_llm_call`) only. Main/Sub prompts take effect once Hermes is upgraded; the exact downgrade reason is displayed in `status` overview, the UI, and the preview.
+- **Runtime Capability Is Self-Reported by the Plugin**: Once the plugin is running, it reports what actually happened at runtime, and the UI shows exactly one of three states:
+  1. **已确认生效 (Confirmed active)** — the middleware ran and injected prompts;
+  2. **已注册，尚未见到请求 (Registered, no requests seen yet)** — installed fine, but no `llm_request` has passed through;
+  3. **未知：请启动一次 Hermes (Unknown: start Hermes once)** — no runtime signal yet, so start one Hermes session to let the plugin report.
 - **Known Bypasses & Limits**:
   - Native `codex_app_server`, auxiliary calls, and max-iteration summary calls inside Hermes do not pass through `llm_request` middleware.
   - `SOUL.md` and `AGENTS.md` are never modified.

@@ -9,8 +9,8 @@ url: https://nb-corp.github.io
 baseurl: /recipe-switch
 lang: en-US
 
-theme: jekyll-theme-primer
 markdown: kramdown
+highlighter: rouge
 
 plugins:
   - jekyll-seo-tag
@@ -27,3 +27,13 @@ defaults:
     values:
       layout: default
       lang: zh-CN
+
+seo:
+  image: /assets/og.png
+  twitter:
+    card: summary_large_image
+
+twitter:
+  card: summary_large_image
+
+author: NB-Corp

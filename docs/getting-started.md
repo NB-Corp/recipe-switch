@@ -1,14 +1,11 @@
 ---
 title: "Installation & Quick Start — recipe-switch"
 description: "Get started with recipe-switch in two minutes: run the isolated sandbox demo, inspect detected AI coding harnesses, preview diffs, apply recipes, and launch the local web UI."
+layout: doc
+page_id: getting-started
+h1: Installation & Quick Start
+kicker: Guide
 ---
-
-# Installation & Quick Start
-
-[Home](index.md) · **Getting Started** · [Harnesses](harnesses.md) · [Safety & Rollback](safety.md) · [Recipes & Options](recipes.md) · [FAQ](faq.md) · [简体中文](zh/getting-started.md)
-
----
-
 ## Prerequisites
 
 - **Node.js ≥ 22** (uses built-in ES modules and native APIs; **zero npm dependencies**).
@@ -27,8 +24,6 @@ cd recipe-switch
 ```sh
 npm link
 ```
-
----
 
 ## 1. Try the Sandbox Demo First (Zero Risk)
 
@@ -49,9 +44,7 @@ Options for `scripts/demo.mjs`:
 - `--port <N>` — change the port (default `4517`).
 - `--no-open` — start the server without opening a browser tab automatically.
 
-![Picker in the local UI](screenshots/02-picker.png)
-
----
+![Picker in the local UI]({{ '/screenshots/02-picker.png' | relative_url }})
 
 ## 2. Inspect Your Real Tools & Recipes
 
@@ -73,8 +66,6 @@ List all available recipes and their checkbox options from your configured sourc
 node bin/recipe-switch.mjs recipes
 ```
 
----
-
 ## 3. Preview and Install a Recipe (CLI)
 
 Every write command (`install`, `switch`, `rollback`, `uninstall`, `restore-original`) runs as a **dry run by default** when `--yes` is omitted:
@@ -87,7 +78,7 @@ node bin/recipe-switch.mjs install pi gpt-with-taste@0.1.0
 node bin/recipe-switch.mjs install pi gpt-with-taste@0.1.0 --yes
 ```
 
-![Diff preview in UI](screenshots/03-diff-preview.png)
+![Diff preview in UI]({{ '/screenshots/03-diff-preview.png' | relative_url }})
 
 ### Passing Recipe Options & Harness Options
 
@@ -104,8 +95,6 @@ node bin/recipe-switch.mjs install dsh gpt-with-taste@0.1.0 --home ~/.dsh/profil
 node bin/recipe-switch.mjs switch pi calm-reviewer@0.2.1 --providers openai --model-pattern "^gpt-" --with security --without cite --yes
 ```
 
----
-
 ## 4. Use the Local Web UI
 
 Launch the portrait control panel on `127.0.0.1`:
@@ -120,9 +109,7 @@ node bin/recipe-switch.mjs ui
 - **Sources tab**: Add or remove local recipe directories or `recipe.toml` files, and configure your `gpt-with-taste` checkout path.
 - **Language & Guide**: Click `EN` / `中` in the top bar to switch between English and Chinese, or click `?` to open the 5-step visual walkthrough.
 
-![Recipe text viewer](screenshots/16-viewer.png)
-
----
+![Recipe text viewer]({{ '/screenshots/16-viewer.png' | relative_url }})
 
 ## 5. Roll Back or Restore Original State
 
@@ -141,4 +128,5 @@ node bin/recipe-switch.mjs originals pi
 node bin/recipe-switch.mjs restore-original pi --yes
 ```
 
-Next: see [Supported Harnesses & Write Points](harnesses.md) for the exact files edited in each tool.
+Next: see [Supported Harnesses & Write Points]({{ '/harnesses.html' | relative_url }}) for the exact files edited in each tool.
+{: .doc-next}

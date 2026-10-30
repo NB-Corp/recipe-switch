@@ -1,0 +1,37 @@
+# Screenshot paths used by the landing pages, centralized so the files can be
+# swapped for the new `ui-*.png` naming later by editing only this file.
+# Paths are relative to site baseurl.
+
+hero:
+  en: screenshots/17-narrow.png
+  zh: screenshots/17-narrow.png
+  alt_en: recipe-switch portrait panel — detected coding tools with install state
+  alt_zh: recipe-switch 竖屏面板 — 已检测到的编程工具与安装状态
+
+features:
+  diff:
+    src: screenshots/03-diff-preview.png
+    alt_en: Unified diff preview before any write
+    alt_zh: 写入前的 unified diff 预览
+  drift:
+    src: screenshots/13-blocked.png
+    alt_en: A hand edit blocks the switch until you decide
+    alt_zh: 检测到手改后拦截切换，由你决定
+  rollback:
+    src: screenshots/08-rollback-preview.png
+    alt_en: Rollback preview restores previous bytes
+    alt_zh: 撤回预览，恢复上一步字节
+  originals:
+    src: screenshots/09-uninstall-preview.png
+    alt_en: Restore the pre-install original state
+    alt_zh: 恢复到装之前的原始状态
+
+options:
+  src: screenshots/06-switch-preview.png
+  alt_en: Checkbox options re-render the live diff
+  alt_zh: 复选框选项实时重算 diff
+
+overview:
+  src: screenshots/01-overview.png
+  alt_en: All detected harnesses in the portrait panel
+  alt_zh: 竖屏面板中的全部已检测工具

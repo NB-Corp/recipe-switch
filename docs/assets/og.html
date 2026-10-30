@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { width: 1200px; height: 630px; overflow: hidden;
+    background: #f3efe6; color: #1d1c1a;
+    font-family: "Bahnschrift", "DIN Alternate", "Barlow", "Microsoft YaHei UI", "PingFang SC", sans-serif;
+    display: flex; flex-direction: column; justify-content: space-between;
+    padding: 72px 84px; position: relative; }
+  body::before { content: ""; position: absolute; inset: -140px -80px auto auto; width: 640px; height: 420px;
+    background: #fbe3d6; border-radius: 50%; filter: blur(2px); opacity: .8; z-index: 0; }
+  .top { display: flex; align-items: center; gap: 18px; position: relative; z-index: 1; }
+  .mark { width: 84px; height: 54px; }
+  .mark rect { fill: #1d1c1a; }
+  .mark circle { fill: #e2531c; }
+  .name { font-size: 44px; font-weight: 600; letter-spacing: -.01em; }
+  .mid { position: relative; z-index: 1; max-width: 900px; }
+  .slogan { font-size: 64px; font-weight: 600; line-height: 1.12; letter-spacing: -.02em; }
+  .slogan em { font-style: normal; color: #b23c0e; }
+  .sub { margin-top: 22px; font-size: 27px; color: #57534b; }
+  .bottom { display: flex; align-items: center; gap: 12px; position: relative; z-index: 1;
+    font-size: 21px; color: #57534b; }
+  .pill { border: 1.5px solid #cfc7b6; background: #fbf9f4; border-radius: 999px; padding: 8px 18px; font-weight: 500; }
+  .pill.hot { border-color: #e2531c; color: #b23c0e; }
+</style>
+</head>
+<body>
+  <div class="top">
+    <svg class="mark" viewBox="0 0 32 20" aria-hidden="true"><rect x="1" y="1" width="30" height="18" rx="9"/><circle cx="21" cy="10" r="6"/></svg>
+    <div class="name">recipe-switch</div>
+  </div>
+  <div class="mid">
+    <div class="slogan">Switch how your AI coding tools <em>think and work</em></div>
+    <div class="sub">One recipe — prompts, subagents, per-turn steering — across 11 coding harnesses. Diff preview · hand-edit protection · byte-exact rollback.</div>
+  </div>
+  <div class="bottom">
+    <span class="pill hot">node scripts/demo.mjs --reset</span>
+    <span class="pill">11 tools</span>
+    <span class="pill">zero dependencies</span>
+    <span class="pill">MIT</span>
+  </div>
+</body>
+</html>

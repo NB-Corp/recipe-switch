@@ -20,6 +20,12 @@ A behavior recipe (`recipe.toml` or an author repo like `gpt-with-taste`) define
 
 Recipes can also declare boolean checkbox options (`[options.<id>]`) that customize prompts via `when`/`unless` item filtering, whole-slot `prepend`/`append`, or Markdown section-level `[[options.<id>.patch]]` (`prepend`, `append`, `before`, `after`, `replace`, `remove`).
 
+## Safety Notes Worth Surfacing
+
+- **Hard-link preflight**: backups and snapshots are captured as atomic hard links. The preview stage probes the target directory; file systems without hard-link support (FAT/exFAT, some network drives) are refused with a "safe writes cannot be guaranteed" notice.
+- **Displaced versions**: each harness keeps at most the most recently displaced old version. On the next operation it is deleted if already backed up, or saved into the new backup first if its content changed. After that next operation, writes through an old still-open file handle are not guaranteed to survive.
+- **Original backups per install cycle**: one snapshot per installation from a clean state, never overwritten within the cycle, dated next to the restore button. Uninstall or restore-to-pre-install ends the cycle, retires the snapshot, and immediately releases unreferenced blobs. Upgraded installs backfill from old records; incomplete originals are marked "reconstructed version (重建版本)" and require extra confirmation. The restore button is disabled when already at the pre-install state. The backup directory is readable only by the current user (`icacls` on Windows, `0700`/`0600` on POSIX).
+
 ## Supported AI Coding Harnesses (11)
 
 - `codex` (**OpenAI Codex**, `~/.codex` / `CODEX_HOME`): Writes `prompts/recipe-switch/{main,sub,recipe.json}` and sets `model_instructions_file = "…" # managed by recipe-switch` in `config.toml`.
@@ -31,8 +37,8 @@ Recipes can also declare boolean checkbox options (`[options.<id>]`) that custom
 - `grok` (**Grok Build**, `~/.grok` / `GROK_HOME`): Writes marked global rule file `rules/recipe-switch.md` alongside existing rules.
 - `opencode` (**OpenCode**, `$XDG_CONFIG_HOME/opencode` / `OPENCODE_CONFIG_DIR`): Writes `recipe-switch/main.md` and adds its path to `instructions` in plain-JSON `opencode.json`.
 - `kimi-code` (**Kimi Code CLI**, `~/.kimi-code` / `KIMI_CODE_HOME`): Writes marked `SYSTEM.md` (`${base_prompt}` + Main), installs `plugins/managed/recipe-switch/{kimi.plugin.json,steer.mjs,recipe.json}`, and registers it in `plugins/installed.json`.
-- `hermes` (**Hermes Agent**, `%LOCALAPPDATA%/hermes` on Windows or `~/.hermes` / `HERMES_HOME`): Installs `plugins/recipe-switch/{plugin.yaml,__init__.py,recipe.json}` and enables it in `config.yaml` (`plugins.enabled`). Uses Python (`python` or `py -3`) to AST-parse host source without executing host code, confirming both that `PluginContext` (or a same-module base class) defines `register_middleware` and that `run_agent.py` / `agent/` dispatches `llm_request`; if Python is absent, parsing fails, or either check fails, installs `pre_llm_call` per-turn steering only and surfaces the reason in overview, UI, and preview. (`codex_app_server`, auxiliary, and max-iteration summary calls bypass the plugin.)
-- `openclaw` (**OpenClaw**, `~/.openclaw` / `OPENCLAW_STATE_DIR` / `OPENCLAW_CONFIG_PATH`): Installs `extensions/recipe-switch/` (`before_prompt_build` plugin) and enables it in strict-JSON `openclaw.json`. Leaves `allowConversationAccess` untouched unless already true or explicitly granted via the UI opt-in checkbox.
+- `hermes` (**Hermes Agent**, `%LOCALAPPDATA%/hermes` on Windows or `~/.hermes` / `HERMES_HOME`): Installs `plugins/recipe-switch/{plugin.yaml,__init__.py,recipe.json}` and enables it in `config.yaml` (`plugins.enabled`). Statically checks host source without executing host code — only whether the `PluginContext` class directly defines `register_middleware`; when the static signal is missing, installs `pre_llm_call` per-turn steering only. Runtime capability is self-reported by the plugin, and the UI shows one of three states: 已确认生效 (confirmed active), 已注册，尚未见到请求 (registered, no requests seen), or 未知：请启动一次 Hermes (unknown — start Hermes once). (`codex_app_server`, auxiliary, and max-iteration summary calls bypass the plugin.)
+- `openclaw` (**OpenClaw**, `~/.openclaw` / `OPENCLAW_STATE_DIR` / `OPENCLAW_CONFIG_PATH`): Installs `extensions/recipe-switch/` (`before_prompt_build` plugin) and enables it in strict-JSON `openclaw.json`. Conversation access is not granted by default: `allowConversationAccess` is written only when the user explicitly checks the UI opt-in (and restored on uninstall); an explicit `allowConversationAccess: false` blocks installation outright.
 
 *(Detected but intentionally uncovered: **Gemini CLI** `~/.gemini`, **Cursor** `~/.cursor`, and **Qoder** `~/.qoder`.)*
 
@@ -71,7 +77,7 @@ node scripts/demo.mjs --reset
 - [Home (EN)](https://nb-corp.github.io/recipe-switch/): Overview, value proposition, and supported tools table.
 - [Installation & Quick Start (EN)](https://nb-corp.github.io/recipe-switch/getting-started.html): Sandbox demo, CLI workflow, and local Web UI guide.
 - [Supported Harnesses & Write Points (EN)](https://nb-corp.github.io/recipe-switch/harnesses.html): Per-tool file paths, config keys, steering hooks, and edge cases.
-- [Safety, Backups & Rollback (EN)](https://nb-corp.github.io/recipe-switch/safety.html): Diff preview, secret redaction, managed units, drift detection, and original backups.
+- [Safety, Backups & Rollback (EN)](https://nb-corp.github.io/recipe-switch/safety.html): Diff preview, secret redaction, hard-link preflight, managed units, drift detection, and per-install-cycle original backups.
 - [Recipes & Options Format (EN)](https://nb-corp.github.io/recipe-switch/recipes.html): Authoring `recipe.toml`, slot inheritance, and option patches.
 - [FAQ (EN)](https://nb-corp.github.io/recipe-switch/faq.html): Common questions on Claude Code, Codex, Kimi Code, Hermes, OpenClaw, and rollbacks.
 - [中文文档首页 (ZH)](https://nb-corp.github.io/recipe-switch/zh/): 中文总览与快速导航。
