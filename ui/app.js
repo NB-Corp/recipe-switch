@@ -1,5 +1,5 @@
-// recipe-loader UI. Talks to the local server with the per-process token.
-const TOKEN = document.querySelector('meta[name="recipe-loader-token"]')?.content ?? '';
+// recipe-switch UI. Talks to the local server with the per-process token.
+const TOKEN = document.querySelector('meta[name="recipe-switch-token"]')?.content ?? '';
 
 const state = {
   overview: null,
@@ -28,7 +28,7 @@ async function api(path, {method = 'GET', body} = {}) {
   const res = await fetch(path, {
     method,
     headers: {
-      'x-recipe-loader-token': TOKEN,
+      'x-recipe-switch-token': TOKEN,
       ...(body !== undefined ? {'content-type': 'application/json'} : {}),
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,

@@ -1,5 +1,5 @@
 // Managed write units. Each unit owns exactly one thing on disk:
-//   file          a whole file the loader owns (inside a recipe-loader directory)
+//   file          a whole file the loader owns (inside a recipe-switch directory)
 //   tomlKey       one single-line string key of a user TOML file (line-exact edit)
 //   jsonArrayItem one string item of an array inside a user JSON file
 //   jsonKey       one key of an object inside a user JSON file

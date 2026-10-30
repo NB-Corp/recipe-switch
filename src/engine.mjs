@@ -10,10 +10,10 @@ import {readFile, writeFile, rmdirIfEmpty, equalBytes, toPosix, sha256} from './
 import {inspect, fingerprintOf, render, apply, identity, ABSENT} from './units.mjs';
 import {unifiedDiff} from './diff.mjs';
 
-export const MARK = 'managed by recipe-loader';
+export const MARK = 'managed by recipe-switch';
 
 export function stateHome(env = process.env) {
-  return path.resolve(env.RECIPE_LOADER_HOME || path.join(os.homedir(), '.recipe-loader'));
+  return path.resolve(env.RECIPE_SWITCH_HOME || path.join(os.homedir(), '.recipe-switch'));
 }
 
 const enc = bytes => bytes === null || bytes === undefined ? null : Buffer.from(bytes).toString('base64');
@@ -133,7 +133,8 @@ export async function plan({store, harness, home, recipe, desired, notes = [], f
     ...conflicts.map(c => `${c.reason}: ${c.path}`)] : [];
   return {
     id: crypto.randomUUID(), key, harness, home: toPosix(path.resolve(home)), kind: kind ?? (target?.stack?.length ? 'switch' : 'install'),
-    recipe: recipe && {key: recipe.key, id: recipe.id, name: recipe.name, version: recipe.version, revision: recipe.revision, origin: recipe.origin},
+    recipe: recipe && {key: recipe.key, id: recipe.id, name: recipe.name, version: recipe.version, revision: recipe.revision, origin: recipe.origin,
+      optionValues: recipe.optionValues ?? {}},
     units, files, drift, conflicts, notes, blocked, force,
   };
 }
@@ -243,7 +244,7 @@ async function pruneDirs(units, known) {
 /** Preview undoing the top operation (rollback) or all operations (uninstall). */
 export async function planUndo(store, harness, home, {all = false, force = false} = {}) {
   const key = targetKey(harness, home), target = await store.target(key);
-  if (!target?.stack?.length) throw new Error(`Nothing installed by recipe-loader for ${harness} at ${toPosix(home)}`);
+  if (!target?.stack?.length) throw new Error(`Nothing installed by recipe-switch for ${harness} at ${toPosix(home)}`);
   const ops = all ? [...target.stack].reverse() : [target.stack.at(-1)];
   const drift = [], steps = [];
   for (const op of ops) steps.push({op, units: op.units.map(deserialize).reverse()});

@@ -39,12 +39,12 @@ test('install → switch → rollback → uninstall restores every original byte
   const dry = await plan({store, harness: 't', home, recipe: recipe(1), desired: desired(home, 1)});
   assert.equal(dry.kind, 'install');
   assert.deepEqual(await tree(home), before, 'planning writes nothing');
-  assert.match(dry.files.find(f => f.path.endsWith('config.toml')).diff, /\+model_instructions_file = ".*rl\/main\.md" # managed by recipe-loader/);
+  assert.match(dry.files.find(f => f.path.endsWith('config.toml')).diff, /\+model_instructions_file = ".*rl\/main\.md" # managed by recipe-switch/);
   await applyPlan(store, dry);
 
   const config = await fs.readFile(path.join(home, 'config.toml'), 'utf8');
   assert.ok(config.startsWith('\uFEFF# keep me\r\nmodel = "gpt"\r\n'), 'BOM, CRLF and unrelated keys preserved');
-  assert.match(config, /\[models\."a\/b"\]\r\nrecipe = "pkg-1" # managed by recipe-loader\r\nprovider = "p"/);
+  assert.match(config, /\[models\."a\/b"\]\r\nrecipe = "pkg-1" # managed by recipe-switch\r\nprovider = "p"/);
   assert.match(await fs.readFile(path.join(home, 's.json'), 'utf8'), /"list": \[ "x", "mine" \],\n {2}"odd": {3}true,\n {2}"deps": \{\n/);
 
   const switched = await plan({store, harness: 't', home, recipe: recipe(2), desired: desired(home, 2, {withJson: false})});
@@ -110,7 +110,7 @@ test('a TOML file and JSON parent created only for managed keys are removed agai
   const units = [tomlKeyUnit(path.join(home, 'new.toml'), [], 'k', 'v'),
     {type: 'jsonKey', path: path.join(home, 'p.json'), pointer: ['dependencies', 'pkg'], afterValue: 'file:x'}];
   await applyPlan(store, await plan({store, harness: 't', home, recipe: recipe(1), desired: units}));
-  assert.match(await fs.readFile(path.join(home, 'new.toml'), 'utf8'), /^k = "v" # managed by recipe-loader\n$/);
+  assert.match(await fs.readFile(path.join(home, 'new.toml'), 'utf8'), /^k = "v" # managed by recipe-switch\n$/);
   await applyUndo(store, await planUndo(store, 't', home, {all: true}));
   assert.deepEqual(await fs.readdir(home), ['p.json']);
   assert.equal(await fs.readFile(path.join(home, 'p.json'), 'utf8'), '{\n  "name": "x"\n}\n', 'dependency parent created by the loader is removed');

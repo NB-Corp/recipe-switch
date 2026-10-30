@@ -33,12 +33,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   const {Service} = await import('../src/service.mjs');
   const {serve} = await import('../src/server.mjs');
   console.log(`Sandbox: ${dir}${fresh ? ' (created)' : ' (reused; --reset to recreate)'}`);
-  await serve({service: new Service({env: process.env, home: env.RECIPE_LOADER_HOME}), port: Number(flag('--port') ?? 4517), open: !argv.includes('--no-open')});
+  await serve({service: new Service({env: process.env, home: env.RECIPE_SWITCH_HOME}), port: Number(flag('--port') ?? 4517), open: !argv.includes('--no-open')});
 }
 
 export function sandboxEnv(dir) {
   return {
-    RECIPE_LOADER_HOME: path.join(dir, 'state'), CODEX_HOME: path.join(dir, 'codex'), KIKI_HOME: path.join(dir, 'kiki'),
+    RECIPE_SWITCH_HOME: path.join(dir, 'state'), CODEX_HOME: path.join(dir, 'codex'), KIKI_HOME: path.join(dir, 'kiki'),
     PI_CODING_AGENT_DIR: path.join(dir, 'pi/agent'), DSH_HOME: path.join(dir, 'dsh'), CLAUDE_CONFIG_DIR: path.join(dir, 'claude'),
     OMP_CODING_AGENT_DIR: path.join(dir, 'omp/agent'), GROK_HOME: path.join(dir, 'grok'), OPENCODE_CONFIG_DIR: path.join(dir, 'opencode'),
   };

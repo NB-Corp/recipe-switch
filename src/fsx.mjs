@@ -33,7 +33,7 @@ export async function writeFile(file, bytes) {
     return [];
   }
   const created = await mkdirp(path.dirname(file));
-  const temp = `${file}.recipe-loader-${process.pid}-${Date.now()}.tmp`;
+  const temp = `${file}.recipe-switch-${process.pid}-${Date.now()}.tmp`;
   try {
     await fs.writeFile(temp, bytes, {flag: 'wx'});
     await fs.rename(temp, file);

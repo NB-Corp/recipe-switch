@@ -1,28 +1,29 @@
 #!/usr/bin/env node
-// recipe-loader CLI. Every write command previews first; add --yes to apply.
+// recipe-switch CLI. Every write command previews first; add --yes to apply.
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {Service, DRIVERS} from '../src/service.mjs';
 import {toPosix} from '../src/fsx.mjs';
 
-const HELP = `recipe-loader — install, switch and roll back behavior recipes across coding harnesses
+const HELP = `recipe-switch — install, switch and roll back behavior recipes across coding harnesses
 
-  recipe-loader status [--json]                      Detected harnesses, active recipes, drift
-  recipe-loader recipes [--json]                     Recipes from configured sources
-  recipe-loader sources [add|remove <path>] [--gwt <gpt-with-taste checkout>]
-  recipe-loader install  <harness> <recipe> [--home DIR] [options] [--yes]
-  recipe-loader switch   <harness> <recipe> [--home DIR] [options] [--yes]
-  recipe-loader rollback <harness> [--home DIR] [--yes]   Undo the latest install/switch
-  recipe-loader uninstall <harness> [--home DIR] [--yes]  Undo everything; restore the original state
-  recipe-loader history  <harness> [--home DIR]
-  recipe-loader ui [--port 4517] [--no-open]          Local web UI on 127.0.0.1
+  recipe-switch status [--json]                      Detected harnesses, active recipes, drift
+  recipe-switch recipes [--json]                     Recipes from configured sources
+  recipe-switch sources [add|remove <path>] [--gwt <gpt-with-taste checkout>]
+  recipe-switch install  <harness> <recipe> [--home DIR] [options] [--yes]
+  recipe-switch switch   <harness> <recipe> [--home DIR] [options] [--yes]
+  recipe-switch rollback <harness> [--home DIR] [--yes]   Undo the latest install/switch
+  recipe-switch uninstall <harness> [--home DIR] [--yes]  Undo everything; restore the original state
+  recipe-switch history  <harness> [--home DIR]
+  recipe-switch ui [--port 4517] [--no-open]          Local web UI on 127.0.0.1
 
 Without --yes, write commands only print the diff (dry run).
 --force overrides hand-edit and foreign-install guards; it is never implied.
+Recipe options: --with a,b --without c   (ids from "recipes"; others keep the installed or default choice)
 Harness options: --models a,b (kiki)  --root-role main|independent (dsh)
                  --providers p,q --model-pattern REGEX (pi)
 Harnesses: ${DRIVERS.map(d => d.id).join(', ')}
-State: RECIPE_LOADER_HOME (default ~/.recipe-loader)
+State: RECIPE_SWITCH_HOME (default ~/.recipe-switch)
 `;
 
 function parse(argv) {
@@ -49,6 +50,14 @@ function options(flags) {
   return out;
 }
 
+function recipeOptions(flags) {
+  if (flags.with === undefined && flags.without === undefined) return undefined;
+  const out = {}, list = value => String(value ?? '').split(',').map(s => s.trim()).filter(Boolean);
+  for (const id of list(flags.with)) out[id] = true;
+  for (const id of list(flags.without)) out[id] = false;
+  return out;
+}
+
 function printPlan(planned) {
   const title = planned.kind === 'rollback' ? `Rollback ${planned.harness}${planned.restores ? ` → ${planned.restores.key}` : ' → original state'}`
     : planned.kind === 'uninstall' ? `Uninstall ${planned.harness} → original state`
@@ -70,7 +79,7 @@ export async function main(argv = process.argv.slice(2), service = new Service()
     if (flags.json) { console.log(JSON.stringify(view, null, 2)); return; }
     console.log(`State: ${view.stateHome}`);
     for (const row of view.targets) {
-      const managed = row.managed?.installed ? `recipe-loader: ${row.managed.recipe.key}` : 'recipe-loader: —';
+      const managed = row.managed?.installed ? `recipe-switch: ${row.managed.recipe.key}` : 'recipe-switch: —';
       const others = (row.live ?? []).filter(item => !item.managed).map(item => `${item.label} (${item.where})`);
       console.log(`\n${row.name}${row.label ? ` [${row.label}]` : ''}  ${row.present ? 'detected' : 'not found'}  ${row.home}\n  ${managed}`);
       if (others.length) console.log(`  other: ${others.join('; ')}`);
@@ -84,7 +93,10 @@ export async function main(argv = process.argv.slice(2), service = new Service()
   if (command === 'recipes') {
     const {recipes, errors} = await service.catalog();
     if (flags.json) { console.log(JSON.stringify({recipes: recipes.map(({texts, artifacts, kikiPackage, ...r}) => r), errors}, null, 2)); return; }
-    for (const recipe of recipes) console.log(`${recipe.key.padEnd(40)} ${recipe.name}  [${recipe.kind}] ${recipe.origin}`);
+    for (const recipe of recipes) {
+      console.log(`${recipe.key.padEnd(40)} ${recipe.name}  [${recipe.kind}] ${recipe.origin}`);
+      for (const option of recipe.options ?? []) console.log(`    ${option.default ? '[x]' : '[ ]'} ${option.id.padEnd(20)} ${option.name}${option.description ? ` — ${option.description}` : ''}`);
+    }
     for (const error of errors) console.log(`error: ${error.locator}: ${error.error}`);
     return;
   }
@@ -104,8 +116,8 @@ export async function main(argv = process.argv.slice(2), service = new Service()
   }
   if (['install', 'switch'].includes(command)) {
     const [harness, recipe] = rest;
-    if (!harness || !recipe) throw new Error(`Usage: recipe-loader ${command} <harness> <recipe>`);
-    const planned = await service.preview({harness, home: flags.home, recipe, options: options(flags), force: flags.force});
+    if (!harness || !recipe) throw new Error(`Usage: recipe-switch ${command} <harness> <recipe>`);
+    const planned = await service.preview({harness, home: flags.home, recipe, options: options(flags), recipeOptions: recipeOptions(flags), force: flags.force});
     if (command === 'install' && planned.kind === 'switch') console.log('(already managed: this is a switch)');
     printPlan(planned);
     if (!flags.yes) { console.log('\nDry run. Re-run with --yes to apply.'); return planned; }
@@ -116,7 +128,7 @@ export async function main(argv = process.argv.slice(2), service = new Service()
   }
   if (['rollback', 'uninstall'].includes(command)) {
     const [harness] = rest;
-    if (!harness) throw new Error(`Usage: recipe-loader ${command} <harness>`);
+    if (!harness) throw new Error(`Usage: recipe-switch ${command} <harness>`);
     const planned = await service.previewUndo({harness, home: flags.home, all: command === 'uninstall', force: flags.force});
     printPlan(planned);
     if (!flags.yes) { console.log('\nDry run. Re-run with --yes to apply.'); return planned; }
@@ -130,7 +142,7 @@ export async function main(argv = process.argv.slice(2), service = new Service()
     const {driver, home} = await service.resolveTarget(harness, flags.home);
     const {status} = await import('../src/engine.mjs');
     const view = await status(service.store, driver.id, home);
-    if (!view.installed) { console.log('Nothing installed by recipe-loader.'); return; }
+    if (!view.installed) { console.log('Nothing installed by recipe-switch.'); return; }
     for (const item of view.history) console.log(`${item.at}  ${item.kind.padEnd(8)} ${item.recipe}  backup ${item.backup}`);
     return;
   }
@@ -143,4 +155,4 @@ export async function main(argv = process.argv.slice(2), service = new Service()
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href)
-  main().catch(error => { console.error(`recipe-loader: ${error.message}`); process.exitCode = 1; });
+  main().catch(error => { console.error(`recipe-switch: ${error.message}`); process.exitCode = 1; });

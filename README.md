@@ -1,4 +1,4 @@
-# recipe-loader
+# recipe-switch
 
 Install, switch and roll back behavior recipes across coding harnesses, from a CLI or a local web page.
 
@@ -9,11 +9,11 @@ Requires Node.js 22 or newer. No npm packages.
 ## Quick start
 
 ```sh
-node bin/recipe-loader.mjs status
-node bin/recipe-loader.mjs recipes
-node bin/recipe-loader.mjs install pi gpt-with-taste@0.1.0          # dry run: prints the diff
-node bin/recipe-loader.mjs install pi gpt-with-taste@0.1.0 --yes    # apply
-node bin/recipe-loader.mjs ui                                       # http://127.0.0.1:4517/
+node bin/recipe-switch.mjs status
+node bin/recipe-switch.mjs recipes
+node bin/recipe-switch.mjs install pi gpt-with-taste@0.1.0          # dry run: prints the diff
+node bin/recipe-switch.mjs install pi gpt-with-taste@0.1.0 --yes    # apply
+node bin/recipe-switch.mjs ui                                       # http://127.0.0.1:4517/
 ```
 
 To try everything without touching your real homes, run `node scripts/demo.mjs --reset`. It creates fake harness homes under `.tmp/demo/` and opens the UI against them.
@@ -45,14 +45,14 @@ Common flags: `--home DIR` picks one target (required for DSH when several profi
 
 | Harness | Home (override) | What the loader writes | Steer |
 | --- | --- | --- | --- |
-| OpenAI Codex | `CODEX_HOME`, `~/.codex` | `prompts/recipe-loader/{main,sub}.md` plus one line, `model_instructions_file = "…" # managed by recipe-loader`, in `config.toml` | None from the loader; gpt-with-taste's own `--hooks` plugin covers it |
-| Claude Code | `CLAUDE_CONFIG_DIR`, `~/.claude` | `recipe-loader/main.md` and `recipe-loader/plugin/` (the gpt-with-taste plugin). Settings are not edited; the loader prints the `claude --append-system-prompt-file … --plugin-dir …` launch command | User, Sub, Agent through plugin hooks |
-| Kiki | `KIKI_HOME`, `~/.kiki` | Recipe package in `recipe-loader/packages/<id>/` plus `recipe = "<package>" # managed by recipe-loader` on each chosen `[models."<alias>"]` | Native Recipe steering |
-| Pi | `PI_CODING_AGENT_DIR`, `~/.pi/agent` | Built-in extension `extensions/recipe-loader/`. Switching rewrites only its `recipe.json`, which the extension re-reads on each request | User, Sub, completed results |
-| DeepSeek Harness | `DSH_HOME`, `~/.dsh`; one target per profile | Built-in bundle `dsh-recipe-loader` under `profiles/<p>/node_modules/` and `profiles/<p>/.recipe-loader/`, one `dependencies` entry and one `dsh.profile.bundles` item in the profile `package.json`. Switching rewrites only `recipe.json`, which is re-read before each step | User, coordinator, subagent reports |
-| Oh My Pi | `OMP_CODING_AGENT_DIR`, `~/.omp/agent` | `extensions/recipe-loader/` (gpt-with-taste OMP adapter) | Through the adapter (GPT models) |
-| Grok Build | `GROK_HOME`, `~/.grok` | `rules/recipe-loader.md`; other rules keep loading | None: Grok hooks cannot add context |
-| OpenCode | `OPENCODE_CONFIG_DIR`, `$XDG_CONFIG_HOME/opencode` | `recipe-loader/main.md` plus one item in the `instructions` array of `opencode.json` | None yet |
+| OpenAI Codex | `CODEX_HOME`, `~/.codex` | `prompts/recipe-switch/{main,sub}.md` plus one line, `model_instructions_file = "…" # managed by recipe-switch`, in `config.toml` | None from the loader; gpt-with-taste's own `--hooks` plugin covers it |
+| Claude Code | `CLAUDE_CONFIG_DIR`, `~/.claude` | `recipe-switch/main.md` and `recipe-switch/plugin/` (the gpt-with-taste plugin). Settings are not edited; the loader prints the `claude --append-system-prompt-file … --plugin-dir …` launch command | User, Sub, Agent through plugin hooks |
+| Kiki | `KIKI_HOME`, `~/.kiki` | Recipe package in `recipe-switch/packages/<id>/` plus `recipe = "<package>" # managed by recipe-switch` on each chosen `[models."<alias>"]` | Native Recipe steering |
+| Pi | `PI_CODING_AGENT_DIR`, `~/.pi/agent` | Built-in extension `extensions/recipe-switch/`. Switching rewrites only its `recipe.json`, which the extension re-reads on each request | User, Sub, completed results |
+| DeepSeek Harness | `DSH_HOME`, `~/.dsh`; one target per profile | Built-in bundle `dsh-recipe-switch` under `profiles/<p>/node_modules/` and `profiles/<p>/.recipe-switch/`, one `dependencies` entry and one `dsh.profile.bundles` item in the profile `package.json`. Switching rewrites only `recipe.json`, which is re-read before each step | User, coordinator, subagent reports |
+| Oh My Pi | `OMP_CODING_AGENT_DIR`, `~/.omp/agent` | `extensions/recipe-switch/` (gpt-with-taste OMP adapter) | Through the adapter (GPT models) |
+| Grok Build | `GROK_HOME`, `~/.grok` | `rules/recipe-switch.md`; other rules keep loading | None: Grok hooks cannot add context |
+| OpenCode | `OPENCODE_CONFIG_DIR`, `$XDG_CONFIG_HOME/opencode` | `recipe-switch/main.md` plus one item in the `instructions` array of `opencode.json` | None yet |
 
 The Pi and DSH plugins in `plugins/` are adapted from the gpt-with-taste runtimes, with the text source changed to the loader's snapshot. That lets one installed plugin carry any recipe.
 
@@ -69,7 +69,7 @@ The Pi and DSH plugins in `plugins/` are adapted from the gpt-with-taste runtime
 
 ## Recipe sources
 
-The default source is the sibling `../gpt-with-taste` checkout, set with `RECIPE_LOADER_GWT` or `sources --gwt`. Its `recipe/manifest.json` and committed `dist/<harness>/` files are used directly. Add more sources with `sources add <path>`:
+The default source is the sibling `../gpt-with-taste` checkout, set with `RECIPE_SWITCH_GWT` or `sources --gwt`. Its `recipe/manifest.json` and committed `dist/<harness>/` files are used directly. Add more sources with `sources add <path>`:
 
 - A gpt-with-taste style repository (`recipe/manifest.json` plus `dist/`).
 - A Kiki Recipe `.toml` file, or a directory of them, such as `../kimi/recipes`. The six texts are read from its `[prompts]`, `[prompts.main]` and `[prompts.independent]` slots. Harness files are rendered by gpt-with-taste's own `adapters/<harness>/build.mjs`, and Kiki receives the original package files.
@@ -77,10 +77,10 @@ The default source is the sibling `../gpt-with-taste` checkout, set with `RECIPE
 ## Safety model
 
 - **Dry run first.** Every write shows a per-file unified diff, with secret-looking values redacted. Apply re-checks that the files still match the preview.
-- **Small, marked ownership.** The loader owns whole files only inside its own `recipe-loader` directories. In user files it owns single TOML keys (tagged `# managed by recipe-loader`), single JSON keys, or single array items. All other bytes, including BOM, CRLF, comments and key order, stay as they are.
+- **Small, marked ownership.** The loader owns whole files only inside its own `recipe-switch` directories. In user files it owns single TOML keys (tagged `# managed by recipe-switch`), single JSON keys, or single array items. All other bytes, including BOM, CRLF, comments and key order, stay as they are.
 - **Hand edits stop the loader.** Each operation records the exact values it wrote. If a managed value has changed since, switch, rollback and uninstall refuse and name the file. `--force` is required to override.
 - **No silent takeover.** An existing non-managed file at a target path, a Codex home managed by gpt-with-taste's `install.mjs`, a Pi gpt-with-taste package, or a DSH `dsh-gpt-with-taste` bundle blocks installation.
-- **Reversible stack.** Operations stack per target in `$RECIPE_LOADER_HOME/state.json` (default `~/.recipe-loader`). Each one keeps a backup copy of every touched file in `backups/<op>/`. Uninstall restores the original bytes and removes directories the loader created.
+- **Reversible stack.** Operations stack per target in `$RECIPE_SWITCH_HOME/state.json` (default `~/.recipe-switch`). Each one keeps a backup copy of every touched file in `backups/<op>/`. Uninstall restores the original bytes and removes directories the loader created.
 - **Local only.** The UI listens on `127.0.0.1`, requires a per-process token, and rejects foreign `Origin` and unexpected `Host` headers.
 
 ## Tests

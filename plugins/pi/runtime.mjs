@@ -1,4 +1,4 @@
-// recipe-loader built-in Pi extension.
+// recipe-switch built-in Pi extension.
 // Adapted from gpt-with-taste adapters/pi/runtime/runtime.mjs (MIT), whose
 // transport adapts SpadeLushen/pi-gpt-with-taste (MIT; see THIRD_PARTY_LICENSE).
 // Changes: behavior text comes from the loader-managed recipe.json snapshot,
@@ -9,7 +9,7 @@ import {ensurePayloadInstructions} from './payload.mjs';
 
 const KEYS = ['main', 'sub', 'independent', 'userSteer', 'subSteer', 'agentSteer'];
 const registrations = new WeakSet();
-const STATE = 'recipe-loader:state';
+const STATE = 'recipe-switch:state';
 const SNAPSHOT = new URL('./recipe.json', import.meta.url);
 
 let cache = {mtime: -1, value: null};
@@ -27,7 +27,7 @@ function overrides(ctx) {
 }
 function report(ctx, text, level = 'info') {
   if (ctx.hasUI) ctx.ui.notify(text, level);
-  else console.error(`recipe-loader: ${text}`);
+  else console.error(`recipe-switch: ${text}`);
 }
 function inScope(scope = {}, model) {
   if (!model) return false;
@@ -37,10 +37,10 @@ function inScope(scope = {}, model) {
 }
 
 export function createRecipeExtension({role = 'main', completedResultTypes = [], snapshot = SNAPSHOT} = {}) {
-  if (!['main', 'sub', 'independent'].includes(role)) throw new Error('recipe-loader role must be main, sub or independent');
+  if (!['main', 'sub', 'independent'].includes(role)) throw new Error('recipe-switch role must be main, sub or independent');
   const completed = new Set(completedResultTypes);
   return function recipeExtension(pi) {
-    if (registrations.has(pi)) throw new Error('Load only one recipe-loader entry per Pi session');
+    if (registrations.has(pi)) throw new Error('Load only one recipe-switch entry per Pi session');
     registrations.add(pi);
     loadSnapshot(snapshot); // fail at startup when the snapshot is unreadable
     const texts = () => Object.fromEntries(KEYS.map(key => [key, loadSnapshot(snapshot).texts[key].trim()]));
@@ -60,7 +60,7 @@ export function createRecipeExtension({role = 'main', completedResultTypes = [],
       return result.payload;
     });
     pi.registerCommand('recipe', {
-      description: 'recipe-loader: status, on, off, steer on, steer off, reset',
+      description: 'recipe-switch: status, on, off, steer on, steer off, reset',
       handler: async (args, ctx) => {
         const command = args.trim() || 'status';
         const state = {...overrides(ctx)};

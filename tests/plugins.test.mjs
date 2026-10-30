@@ -21,13 +21,13 @@ const piCtx = (api, model = {provider: 'openai', id: 'gpt-5.5'}) => ({model, has
 test('pi: installed extension injects the active recipe, follows a switch without reload, honors scope', async t => {
   const {service, file} = await sandbox(t);
   await install(service, 'pi', GWT_KEY, {options: {providers: 'openai'}});
-  const entry = file('pi/agent/extensions/recipe-loader/index.js');
+  const entry = file('pi/agent/extensions/recipe-switch/index.js');
   const module = await import(pathToFileURL(entry).href + `?t=${Date.now()}`);
   const api = piApi();
   module.default(api);
   assert.deepEqual([...api.handlers.keys()], ['context_with_system', 'before_provider_request']);
   assert.ok(api.commands.has('recipe'));
-  const snapshot = JSON.parse(await fs.readFile(file('pi/agent/extensions/recipe-loader/recipe.json'), 'utf8'));
+  const snapshot = JSON.parse(await fs.readFile(file('pi/agent/extensions/recipe-switch/recipe.json'), 'utf8'));
   const system = {role: 'system', content: '', sections: {host: 'HOST TOOLS'}, timestamp: 0};
   const user = {role: 'user', content: 'hello', timestamp: 1};
   const run = async (ctx = piCtx(api)) => (await api.handlers.get('context_with_system')({messages: [system, user]}, ctx)).messages;
@@ -44,7 +44,7 @@ test('pi: installed extension injects the active recipe, follows a switch withou
 
   if (ALT) {
     await install(service, 'pi', ALT);
-    const next = JSON.parse(await fs.readFile(file('pi/agent/extensions/recipe-loader/recipe.json'), 'utf8'));
+    const next = JSON.parse(await fs.readFile(file('pi/agent/extensions/recipe-switch/recipe.json'), 'utf8'));
     out = await run();
     assert.ok(out[0].sections.gpt_with_taste.includes(next.texts.main.trim()), 'switch is picked up by the running extension');
     assert.ok(!out[0].sections.gpt_with_taste.includes(snapshot.texts.main.trim().slice(0, 200)));
@@ -71,8 +71,8 @@ test('dsh: real DSH profile discovery + Cordis Loader activate the installed bun
   await install(service, 'dsh', GWT_KEY, {home: profile});
   healProfilesModuleFallback(path.join(DSH_ROOT, 'package.json'), home);
   const native = loadProfile('dsh', 'web', path.join(DSH_ROOT, 'package.json'), home);
-  const layer = native.layers.find(item => item.packageDir?.endsWith(path.join('node_modules', 'dsh-recipe-loader')));
-  assert.ok(layer, 'DSH resolves dsh-recipe-loader from the profile bundles list');
+  const layer = native.layers.find(item => item.packageDir?.endsWith(path.join('node_modules', 'dsh-recipe-switch')));
+  assert.ok(layer, 'DSH resolves dsh-recipe-switch from the profile bundles list');
   const rows = composeEntries([native.layers.filter(item => item === layer).map(item => item.patches)[0], native.patches]);
 
   const ctx = new Context();
@@ -83,13 +83,13 @@ test('dsh: real DSH profile discovery + Cordis Loader activate the installed bun
       config: name === 'dsh-agent-loop' ? {agents: []} : name === 'dsh-system-prompt' ? {persona: 'HOST PERSONA'} : {}});
   await ctx.loader.root.update([...ctx.loader.root.data, ...rows]);
   await ctx.loader.await();
-  assert.equal(ctx.loader.resolve('recipe-loader').fiber.state, 2, 'plugin is ACTIVE');
+  assert.equal(ctx.loader.resolve('recipe-switch').fiber.state, 2, 'plugin is ACTIVE');
 
   const makeAgent = async (id, origin) => (await ctx.agents.create({sessionId: SessionId(id), meta: origin ? {origin} : {},
     agentOptions: {provider: 'p', model: 'm', maxTokens: 1}})).agent;
   const main = await makeAgent('main'), sub = await makeAgent('sub', 'subagent');
-  const section = async agent => (await ctx.systemPrompt.assemble(assembleContextFor(agent))).sections.find(s => s.name === 'recipe-loader:behavior')?.text;
-  const snap = async () => JSON.parse(await fs.readFile(path.join(profile, 'node_modules/dsh-recipe-loader/recipe.json'), 'utf8'));
+  const section = async agent => (await ctx.systemPrompt.assemble(assembleContextFor(agent))).sections.find(s => s.name === 'recipe-switch:behavior')?.text;
+  const snap = async () => JSON.parse(await fs.readFile(path.join(profile, 'node_modules/dsh-recipe-switch/recipe.json'), 'utf8'));
   let texts = (await snap()).texts;
   assert.equal(await section(main), texts.main);
   assert.equal(await section(sub), texts.sub);
@@ -100,7 +100,7 @@ test('dsh: real DSH profile discovery + Cordis Loader activate the installed bun
   const stepped = await step(main, [message('user')]);
   assert.equal(stepped.messages.length, 2);
   assert.equal(stepped.messages[0].content[0].text, texts.userSteer.trim());
-  assert.deepEqual(stepped.messages[0].source, {kind: 'plugin', plugin: 'recipe-loader', form: 'instructions'});
+  assert.deepEqual(stepped.messages[0].source, {kind: 'plugin', plugin: 'recipe-switch', form: 'instructions'});
   const tool = message('tool');
   assert.deepEqual((await step(main, [tool])).messages, [tool]);
 

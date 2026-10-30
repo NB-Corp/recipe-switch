@@ -39,6 +39,6 @@ export async function readJson(file) {
 export async function dirExists(dir) { return exists(dir); }
 
 export const marker = recipe => JSON.stringify({
-  managedBy: 'recipe-loader', recipe: recipe.id, name: recipe.name, version: recipe.version,
+  managedBy: 'recipe-switch', recipe: recipe.id, name: recipe.name, version: recipe.version,
   revision: recipe.revision, origin: recipe.origin,
 }, null, 2) + '\n';

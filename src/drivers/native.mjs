@@ -35,7 +35,7 @@ export const codex = {
     return {present: await exists(home), live, foreign};
   },
   async desired(recipe, home) {
-    const files = await recipe.artifacts('codex'), dir = path.join(home, 'prompts', 'recipe-loader');
+    const files = await recipe.artifacts('codex'), dir = path.join(home, 'prompts', 'recipe-switch');
     const units = placeFiles(dir, files, {only: rel => ['main.md', 'sub.md'].includes(rel)});
     units.push(fileUnit(path.join(dir, 'recipe.json'), marker(recipe)));
     units.push(tomlKeyUnit(path.join(home, 'config.toml'), [], 'model_instructions_file', path.join(dir, 'main.md')));
@@ -74,7 +74,7 @@ export const kiki = {
         const line = readKeyLine(text, ['models', alias], 'recipe');
         if (!line) continue;
         const value = keyValue(line);
-        live.push({label: own(line) ? `recipe-loader: ${path.basename(path.dirname(value))}` : installs.get(value) ?? value, where: `models.${alias}`, managed: own(line)});
+        live.push({label: own(line) ? `recipe-switch: ${path.basename(path.dirname(value))}` : installs.get(value) ?? value, where: `models.${alias}`, managed: own(line)});
       }
     }
     return {present: await exists(home), live, foreign: []};
@@ -84,7 +84,7 @@ export const kiki = {
     if (!models.length) throw new Error('Kiki: choose at least one model (--models alias[,alias])');
     const known = await kikiModels(home);
     for (const alias of models) if (!known.includes(alias)) throw new Error(`Kiki: model ${alias} is not defined in config.toml`);
-    const dir = path.join(home, 'recipe-loader', 'packages', recipe.id), units = [];
+    const dir = path.join(home, 'recipe-switch', 'packages', recipe.id), units = [];
     if (recipe.kikiPackage) {
       for (const [rel, bytes] of recipe.kikiPackage.files) units.push(fileUnit(path.join(dir, rel), bytes));
     } else {
@@ -103,11 +103,11 @@ export const claude = {
   steer: 'User, Sub and Agent Steer through the bundled plugin hooks',
   resolveHome: env => path.resolve(env.CLAUDE_CONFIG_DIR || path.join(homeDir(env), '.claude')),
   async detect(home) {
-    const snap = await readJson(path.join(home, 'recipe-loader', 'recipe.json'));
-    return {present: await exists(home), live: snap?.managedBy ? [{label: `${snap.name} ${snap.version}`, where: 'recipe-loader/'}] : [], foreign: []};
+    const snap = await readJson(path.join(home, 'recipe-switch', 'recipe.json'));
+    return {present: await exists(home), live: snap?.managedBy ? [{label: `${snap.name} ${snap.version}`, where: 'recipe-switch/'}] : [], foreign: []};
   },
   async desired(recipe, home) {
-    const files = await recipe.artifacts('claude'), dir = path.join(home, 'recipe-loader');
+    const files = await recipe.artifacts('claude'), dir = path.join(home, 'recipe-switch');
     const units = placeFiles(dir, files, {only: rel => rel === 'main.md' || rel === 'independent.md' || rel.startsWith('plugin/')});
     units.push(fileUnit(path.join(dir, 'recipe.json'), marker(recipe)));
     const main = toPosix(path.join(dir, 'main.md')), plugin = toPosix(path.join(dir, 'plugin'));
@@ -118,15 +118,15 @@ export const claude = {
 
 // ---------------------------------------------------------------- OMP
 export const omp = {
-  id: 'omp', name: 'Oh My Pi', mechanism: 'User extension directory extensions/recipe-loader (gpt-with-taste OMP adapter)',
+  id: 'omp', name: 'Oh My Pi', mechanism: 'User extension directory extensions/recipe-switch (gpt-with-taste OMP adapter)',
   steer: 'User, Sub and completed Task Steer through the adapter (GPT models by default)',
   resolveHome: env => path.resolve(env.OMP_CODING_AGENT_DIR || path.join(homeDir(env), '.omp', 'agent')),
   async detect(home) {
-    const snap = await readJson(path.join(home, 'extensions', 'recipe-loader', 'recipe.json'));
-    return {present: await exists(home), live: snap?.managedBy ? [{label: `${snap.name} ${snap.version}`, where: 'extensions/recipe-loader'}] : [], foreign: []};
+    const snap = await readJson(path.join(home, 'extensions', 'recipe-switch', 'recipe.json'));
+    return {present: await exists(home), live: snap?.managedBy ? [{label: `${snap.name} ${snap.version}`, where: 'extensions/recipe-switch'}] : [], foreign: []};
   },
   async desired(recipe, home) {
-    const files = await recipe.artifacts('omp'), dir = path.join(home, 'extensions', 'recipe-loader');
+    const files = await recipe.artifacts('omp'), dir = path.join(home, 'extensions', 'recipe-switch');
     const units = placeFiles(dir, files, {only: rel => rel !== 'build-manifest.json'});
     units.push(fileUnit(path.join(dir, 'recipe.json'), marker(recipe)));
     return {units, notes: ['Restart OMP. The adapter applies to openai / openai-codex gpt-* models, as in gpt-with-taste.']};
@@ -135,17 +135,17 @@ export const omp = {
 
 // ---------------------------------------------------------------- Grok Build
 export const grok = {
-  id: 'grok', name: 'Grok Build', mechanism: 'Global rule file rules/recipe-loader.md (always loaded)',
+  id: 'grok', name: 'Grok Build', mechanism: 'Global rule file rules/recipe-switch.md (always loaded)',
   steer: 'None: Grok hooks cannot add model context',
   resolveHome: env => path.resolve(env.GROK_HOME?.trim() ? env.GROK_HOME : path.join(homeDir(env), '.grok')),
   async detect(home) {
-    const bytes = await readFile(path.join(home, 'rules', 'recipe-loader.md'));
-    const head = bytes && decode(bytes).match(/^<!-- recipe-loader: (.+?) -->/);
-    return {present: await exists(home), live: head ? [{label: head[1], where: 'rules/recipe-loader.md'}] : [], foreign: []};
+    const bytes = await readFile(path.join(home, 'rules', 'recipe-switch.md'));
+    const head = bytes && decode(bytes).match(/^<!-- recipe-switch: (.+?) -->/);
+    return {present: await exists(home), live: head ? [{label: head[1], where: 'rules/recipe-switch.md'}] : [], foreign: []};
   },
   async desired(recipe, home) {
-    const body = `<!-- recipe-loader: ${recipe.name} ${recipe.version} (${recipe.revision}). Managed file; switch or uninstall with recipe-loader. -->\n\n${recipe.texts.main.trim()}\n`;
-    return {units: [fileUnit(path.join(home, 'rules', 'recipe-loader.md'), body)], notes: ['Existing rules files stay in place and keep loading alongside this one.']};
+    const body = `<!-- recipe-switch: ${recipe.name} ${recipe.version} (${recipe.revision}). Managed file; switch or uninstall with recipe-switch. -->\n\n${recipe.texts.main.trim()}\n`;
+    return {units: [fileUnit(path.join(home, 'rules', 'recipe-switch.md'), body)], notes: ['Existing rules files stay in place and keep loading alongside this one.']};
   },
 };
 
@@ -158,11 +158,11 @@ export const opencode = {
     const config = await readJson(path.join(home, 'opencode.json')), foreign = [];
     if (config === undefined) foreign.push({what: 'opencode.json', detail: 'not plain JSON (comments?); the loader will not edit it', blocking: true});
     if (await exists(path.join(home, 'opencode.jsonc'))) foreign.push({what: 'opencode.jsonc', detail: 'also present; the loader edits opencode.json only', blocking: false});
-    const snap = await readJson(path.join(home, 'recipe-loader', 'recipe.json'));
-    return {present: await exists(home), live: snap?.managedBy ? [{label: `${snap.name} ${snap.version}`, where: 'recipe-loader/main.md'}] : [], foreign};
+    const snap = await readJson(path.join(home, 'recipe-switch', 'recipe.json'));
+    return {present: await exists(home), live: snap?.managedBy ? [{label: `${snap.name} ${snap.version}`, where: 'recipe-switch/main.md'}] : [], foreign};
   },
   async desired(recipe, home) {
-    const dir = path.join(home, 'recipe-loader'), main = path.join(dir, 'main.md');
+    const dir = path.join(home, 'recipe-switch'), main = path.join(dir, 'main.md');
     return {units: [fileUnit(main, recipe.texts.main), fileUnit(path.join(dir, 'recipe.json'), marker(recipe)),
       jsonItemUnit(path.join(home, 'opencode.json'), ['instructions'], toPosix(main))],
     notes: ['Added after the global AGENTS.md and project instructions; restart OpenCode.']};

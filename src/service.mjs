@@ -21,7 +21,7 @@ export const UNCOVERED = [
 ];
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
-export const defaultGwt = () => process.env.RECIPE_LOADER_GWT || path.resolve(ROOT, '..', 'gpt-with-taste');
+export const defaultGwt = () => process.env.RECIPE_SWITCH_GWT || path.resolve(ROOT, '..', 'gpt-with-taste');
 
 export class Service {
   constructor({env = process.env, home = stateHome(env), homes = {}} = {}) {
@@ -45,11 +45,15 @@ export class Service {
     const {gwt, sources} = await this.config();
     return loadCatalog(sources, {gwtRoot: gwt});
   }
-  async recipe(key) {
+  /** A recipe at its default options, or at `selection` (recipe option id → bool). */
+  async recipe(key, selection) {
     const {recipes} = await this.catalog();
     const match = recipes.find(recipe => recipe.key === key) ?? recipes.filter(recipe => recipe.id === key).at(-1);
     if (!match) throw new Error(`Unknown recipe ${key}. Available: ${recipes.map(r => r.key).join(', ')}`);
-    return match;
+    if (!selection || !match.withOptions) return match;
+    const variant = await match.withOptions(selection);
+    variant.key = match.key;
+    return variant;
   }
   driver(id) {
     const driver = DRIVERS.find(item => item.id === id);
@@ -102,12 +106,17 @@ export class Service {
   }
 
   /** Preview installing or switching to a recipe. */
-  async preview({harness, home, recipe: recipeKey, options = {}, force = false}) {
+  async preview({harness, home, recipe: recipeKey, options = {}, recipeOptions, force = false}) {
     const {driver, home: target} = await this.resolveTarget(harness, home), {gwt} = await this.config();
-    const recipe = await this.recipe(recipeKey);
     const found = await driver.detect(target, {gwtRoot: gwt});
     const managed = await status(this.store, driver.id, target);
-    const saved = managed.installed ? (await this.store.target(targetKey(driver.id, target))).stack.at(-1).options ?? {} : {};
+    const top = managed.installed ? (await this.store.target(targetKey(driver.id, target))).stack.at(-1) : null;
+    const saved = top?.options ?? {};
+    // Recipe options: explicit choices layer over the installed choice of the same recipe, then the defaults.
+    const sameRecipe = top && (top.recipe?.key === recipeKey || top.recipe?.id === recipeKey);
+    const kept = sameRecipe ? top.recipe?.optionValues ?? {} : {};
+    const selection = recipeOptions || sameRecipe ? {...kept, ...recipeOptions} : undefined;
+    const recipe = await this.recipe(recipeKey, selection);
     const merged = {...saved, ...options};
     const {units, notes = [], launch} = await driver.desired(recipe, target, merged);
     const planned = await plan({store: this.store, harness: driver.id, home: target, recipe, desired: units, notes, force});

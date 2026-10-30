@@ -1,13 +1,13 @@
-// recipe-loader built-in DSH plugin.
+// recipe-switch built-in DSH plugin.
 // Adapted from gpt-with-taste adapters/dsh/runtime.mjs (MIT). Changes: the
 // behavior text is the loader-managed recipe.json snapshot, re-read whenever
 // it changes, so switching a recipe never touches DSH profile configuration.
 import {readFile, stat} from 'node:fs/promises';
 import {createUserMessage} from '@deepseek-ai/dsh-llm';
 
-export const name = 'recipe-loader';
+export const name = 'recipe-switch';
 export const inject = ['systemPrompt', 'agents'];
-const sectionName = 'recipe-loader:behavior';
+const sectionName = 'recipe-switch:behavior';
 const KEYS = ['main', 'sub', 'independent', 'userSteer', 'subSteer', 'agentSteer'];
 
 export function snapshotReader(url = new URL('./recipe.json', import.meta.url)) {
@@ -26,7 +26,7 @@ export function snapshotReader(url = new URL('./recipe.json', import.meta.url)) 
 /** Native DSH augmentation; the active recipe decides the text. */
 export async function apply(ctx, config = {}) {
   const rootRole = config.rootRole ?? 'main';
-  if (!['main', 'independent'].includes(rootRole)) throw new Error('recipe-loader rootRole must be main or independent');
+  if (!['main', 'independent'].includes(rootRole)) throw new Error('recipe-switch rootRole must be main or independent');
   const snapshot = snapshotReader(config.snapshot ? new URL(config.snapshot) : undefined);
   let current = await snapshot();
   const texts = () => current.texts;

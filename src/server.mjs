@@ -16,10 +16,15 @@ function strip(planned) {
   const {units, ...rest} = planned;
   return rest;
 }
-function catalogView({recipes, errors}) {
-  return {recipes: recipes.map(recipe => ({key: recipe.key, id: recipe.id, name: recipe.name, version: recipe.version, description: recipe.description,
+const optionView = option => ({id: option.id, name: option.name, description: option.description, default: option.default, affects: option.affects ?? []});
+function recipeView(recipe) {
+  return {key: recipe.key, id: recipe.id, name: recipe.name, version: recipe.version, description: recipe.description,
     kind: recipe.kind, origin: recipe.origin, revision: recipe.revision,
-    sizes: Object.fromEntries(Object.entries(recipe.texts).map(([key, text]) => [key, text ? text.length : 0]))})), errors};
+    options: (recipe.options ?? []).map(optionView), optionValues: recipe.optionValues ?? {},
+    sizes: Object.fromEntries(Object.entries(recipe.texts).map(([key, text]) => [key, text ? text.length : 0]))};
+}
+function catalogView({recipes, errors}) {
+  return {recipes: recipes.map(recipeView), errors};
 }
 
 export function createServer({service = new Service(), token = crypto.randomBytes(24).toString('hex')} = {}) {
@@ -27,8 +32,9 @@ export function createServer({service = new Service(), token = crypto.randomByte
     'GET /api/overview': () => service.overview(),
     'GET /api/recipes': async () => catalogView(await service.catalog()),
     'GET /api/recipe': async (_, query) => {
-      const recipe = await service.recipe(query.get('key'));
-      return {key: recipe.key, name: recipe.name, version: recipe.version, origin: recipe.origin, texts: recipe.texts};
+      const options = query.get('options') ? JSON.parse(query.get('options')) : undefined;
+      const recipe = await service.recipe(query.get('key'), options);
+      return {...recipeView(recipe), texts: recipe.texts};
     },
     'GET /api/config': () => service.config(),
     'POST /api/config': body => service.saveConfig({...(body.sources ? {sources: body.sources} : {}), ...(body.gwt ? {gwt: body.gwt} : {})}),
@@ -50,7 +56,7 @@ export function createServer({service = new Service(), token = crypto.randomByte
       if (url.pathname.startsWith('/api/')) {
         const origin = req.headers.origin;
         if (origin && !allowedHosts.map(host => `http://${host}`).includes(origin)) return send(403, {error: 'Cross-origin request refused'});
-        if (req.headers['x-recipe-loader-token'] !== token) return send(401, {error: 'Missing or wrong session token; reopen the URL printed by the CLI.'});
+        if (req.headers['x-recipe-switch-token'] !== token) return send(401, {error: 'Missing or wrong session token; reopen the URL printed by the CLI.'});
         const handler = routes[`${req.method} ${url.pathname}`];
         if (!handler) return send(404, {error: 'Not found'});
         let body = {};
@@ -81,7 +87,7 @@ export async function serve({service = new Service(), port = 4517, open = true} 
   const {server} = createServer({service});
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
   const url = `http://127.0.0.1:${server.address().port}/`;
-  console.log(`recipe-loader UI: ${url}\nListening on 127.0.0.1 only. Ctrl+C to stop.`);
+  console.log(`recipe-switch UI: ${url}\nListening on 127.0.0.1 only. Ctrl+C to stop.`);
   if (open) {
     const [cmd, args] = process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
     spawn(cmd, args, {stdio: 'ignore', detached: true}).on('error', () => {}).unref();

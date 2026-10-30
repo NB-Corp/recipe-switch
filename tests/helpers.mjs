@@ -7,7 +7,7 @@ import {makeSandbox} from '../scripts/demo.mjs';
 import {Service} from '../src/service.mjs';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export const GWT = process.env.RECIPE_LOADER_GWT || path.resolve(ROOT, '..', 'gpt-with-taste');
+export const GWT = process.env.RECIPE_SWITCH_GWT || path.resolve(ROOT, '..', 'gpt-with-taste');
 export const KIKI_RECIPES = path.resolve(ROOT, '..', 'kimi', 'recipes');
 
 export async function sandbox(t, {sources} = {}) {
@@ -18,7 +18,7 @@ export async function sandbox(t, {sources} = {}) {
   const env = await makeSandbox(dir);
   // Isolate from the real machine: no HOME/USERPROFILE fallback can resolve outside dir.
   const fullEnv = {...env, HOME: path.join(dir, 'user'), USERPROFILE: path.join(dir, 'user'), XDG_CONFIG_HOME: path.join(dir, 'xdg')};
-  const service = new Service({env: fullEnv, home: env.RECIPE_LOADER_HOME});
+  const service = new Service({env: fullEnv, home: env.RECIPE_SWITCH_HOME});
   await service.saveConfig({gwt: GWT, sources: sources ?? [GWT, ...(await exists(KIKI_RECIPES) ? [KIKI_RECIPES] : [])]});
   return {dir, env: fullEnv, service, read: rel => fs.readFile(path.join(dir, rel), 'utf8'), file: rel => path.join(dir, rel)};
 }
