@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {sandbox, tree, install, undo, GWT, KIKI_RECIPES, exists} from './helpers.mjs';
+import {loadSource} from '../src/sources.mjs';
 
 const GWT_KEY = 'gpt-with-taste@0.1.0';
 const hasKiki = await exists(KIKI_RECIPES);
@@ -55,7 +56,12 @@ test('kiki: package beside the home; only the chosen models get a recipe key; ex
   const config = await read('kiki/config.toml');
   assert.match(config, /\[models\."axon\/gpt-6\.1-sol"\]\nrecipe = ".*\/kiki\/recipe-switch\/packages\/gpt-with-taste\/recipe\.toml" # managed by recipe-switch\nprovider = "axon"/);
   assert.match(config, /\[models\."deepseek-v4-flash"\]\nrecipe = ".*recipe\.toml" # managed by recipe-switch\nprovider = "axon-chat"/);
-  assert.equal(await read('kiki/recipe-switch/packages/gpt-with-taste/recipe.toml'), await dist('kiki/recipe.toml'));
+  // The package may inline evaluated slots or reference files; what matters is that it loads back to the recipe's texts.
+  const pkg = await loadSource(path.join(dir, 'kiki/recipe-switch/packages/gpt-with-taste/recipe.toml'));
+  const source = (await service.catalog()).recipes.find(r => r.key === GWT_KEY);
+  const [loaded] = pkg;
+  for (const key of ['main', 'sub', 'independent', 'userSteer', 'subSteer', 'agentSteer'])
+    assert.equal((loaded.texts[key] ?? '').trim(), (source.texts[key] ?? '').trim(), `kiki package ${key}`);
   const view = await service.overview();
   assert.equal(view.targets.find(r => r.harness === 'kiki').live.filter(l => l.managed).length, 2);
   if (hasKiki) {
