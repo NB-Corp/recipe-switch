@@ -1,0 +1,29 @@
+title: recipe-switch
+tagline: Switch how your AI coding tools think and work
+description: >-
+  One-click working styles for your AI coding tools. Install, switch, customize,
+  and roll back prompts, subagent instructions, and per-turn steering across
+  Codex, Claude Code, Kiki, Pi, DeepSeek Harness, OMP, Grok, OpenCode, Kimi Code,
+  Hermes, and OpenClaw — with diff preview and byte-exact recovery.
+url: https://nb-corp.github.io
+baseurl: /recipe-switch
+lang: en-US
+
+theme: jekyll-theme-primer
+markdown: kramdown
+
+plugins:
+  - jekyll-seo-tag
+  - jekyll-sitemap
+
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+      lang: en-US
+  - scope:
+      path: "zh"
+    values:
+      layout: default
+      lang: zh-CN

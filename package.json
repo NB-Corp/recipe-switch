@@ -2,7 +2,7 @@
   "name": "recipe-switch",
   "version": "0.1.0",
   "private": true,
-  "description": "Install, switch and roll back behavior recipes across coding harnesses, with a local web UI.",
+  "description": "One-click working styles for your AI coding tools. Install, switch, and roll back prompts, subagent instructions, and per-turn steering across Codex, Claude Code, Kiki, Pi, Kimi Code, OpenCode, and more.",
   "license": "MIT",
   "type": "module",
   "engines": { "node": ">=22" },
