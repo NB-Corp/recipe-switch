@@ -5,7 +5,7 @@ import {Store, stateHome, plan, applyPlan, planUndo, applyUndo, planRestoreOrigi
 import {readOriginals, originalBytes} from './originals.mjs';
 import {loadCatalog} from './sources.mjs';
 import {readJson} from './drivers/common.mjs';
-import {writeFile, toPosix, exists} from './fsx.mjs';
+import {writeFile, toPosix, exists, readFile, assertBoundary, sha256} from './fsx.mjs';
 import * as native from './drivers/native.mjs';
 import * as builtin from './drivers/builtin.mjs';
 import * as plugins from './drivers/plugins.mjs';
@@ -156,11 +156,23 @@ export class Service {
 
   async originals({harness, home}) {
     const {driver, home: target} = await this.resolveTarget(harness, home);
-    return this.store.transaction(async () => {
+    return this.store.transaction(async state => {
       const original = await readOriginals(this.store, driver.id, target);
-      if (!original) return null;
+      if (!original) {
+        const ended = state.endedOriginals?.[targetKey(driver.id, target)];
+        if (!ended) return null;
+        let alreadyOriginal = true;
+        for (const entry of ended.files) {
+          await assertBoundary(entry.path, entry.boundary ?? target);
+          const bytes = await readFile(entry.path);
+          if ((bytes === null ? null : sha256(bytes)) !== entry.fingerprint) alreadyOriginal = false;
+        }
+        return {harness: driver.id, home: toPosix(target), capturedAt: ended.capturedAt, ended: true, alreadyOriginal, restorable: false, files: []};
+      }
       return {harness: driver.id, home: original.home, capturedAt: original.capturedAt, manifest: original.manifest,
-        files: original.files.map(({path, existed, hash, size, mtime, capturedAt}, id) => ({id, path, existed, hash, size, mtime, capturedAt}))};
+        restorable: true, reconstructed: original.files.some(file => file.reconstructed),
+        reasons: original.files.filter(file => file.reconstructed).map(file => ({path: file.path, reason: file.reason})),
+        files: original.files.map(({path, existed, hash, size, mtime, capturedAt, source, reconstructed, reason}, id) => ({id, path, existed, hash, size, mtime, capturedAt, source, reconstructed, reason}))};
     });
   }
   async originalText({harness, home, id}) {

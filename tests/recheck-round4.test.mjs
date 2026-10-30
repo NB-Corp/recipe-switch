@@ -45,7 +45,7 @@ test('R23: preview blocks unsafe filesystems in CLI/UI, even under force; target
 test('R23: link capability lost after preview restores the original via guarded rename', async t => {
   const b = await box(t); await install(b, 'ORIGINAL');
   const planned = await preview(b, 'NEXT'), link = fs.link, rename = fs.rename; let restored = false;
-  fs.link = async () => { throw unsupported(); };
+  fs.link = async (from, to) => { if (to === b.target) throw unsupported(); return link(from, to); };
   fs.rename = async (from, to) => { if (to === b.target && String(from).endsWith('.displaced')) restored = true; return rename(from, to); };
   try { await assert.rejects(applyPlan(b.store, planned), /unsupported link/); }
   finally { fs.link = link; fs.rename = rename; }

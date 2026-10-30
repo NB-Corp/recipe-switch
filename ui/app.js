@@ -16,6 +16,8 @@ const STRINGS = {
     blockedTitle: '先处理这些', warnTitle: '注意', notesTitle: '说明', launchTitle: '以后用这条命令启动',
     resultInstalled: '已装上', resultSwitched: '已切换', resultRolledBack: '已撤回', resultRestored: '已还原', backupAt: '备份', replacedAt: '被替换的版本保存在',
     originalsTitle: '原始备份', restoreOriginal: '恢复到装之前', resultOriginal: '已恢复到装之前', viewOriginal: '查看原文',
+    originalDate: date => `（${date} 的备份）`, alreadyOriginal: '已经是装之前的状态', originalCycleEnded: '安装周期已结束，快照已退役',
+    reconstructed: '重建版本：可能包含安装后的其它修改', confirmReconstructed: '确认恢复重建版本（先备份）',
     originallyAbsent: '原来不存在 · 不存储字节', originalPrivate: '原始文件内容（敏感值已隐藏）', originalBinary: '二进制文件；确认恢复后会还原完整字节。',
     originalRestoreHint: '将撤下全部配方，恢复这些文件的完整原始字节；文件内其他手改也会被替换。检测到手改会先阻断，强制恢复会先备份当前版本。',
     defaultOn: '默认开', defaultOff: '默认关', affects: '影响', viewText: '查看文本', noOptions: '这份配方没有可调选项。',
@@ -39,10 +41,12 @@ const STRINGS = {
     history: 'History', toolsDetected: n => `${n} tools detected`, uncovered: 'Not supported yet', uncoveredNote: 'No suitable write point yet; these tools are left untouched.',
     pickRecipe: 'Pick a recipe', choose: 'Choose', current: 'current', recipeOptions: 'Recipe options', toolOptions: 'Tool settings',
     preview: 'Changes', apply: 'Write changes', applying: 'Writing…', cancel: 'Cancel', back: 'Back', done: 'Done', next: 'Next', start: 'Get started',
-    from: 'Now', to: 'Becomes', original: 'Tool default', nothingToWrite: 'Nothing to write.', files: n => `${n} file${n === 1 ? '' : 's'}`,
+    from: 'Now', to: 'Becomes', original: 'Pre-install backup', nothingToWrite: 'Nothing to write.', files: n => `${n} file${n === 1 ? '' : 's'}`,
     blockedTitle: 'Resolve first', warnTitle: 'Heads-up', notesTitle: 'Notes', launchTitle: 'Start sessions with',
     resultInstalled: 'Installed', resultSwitched: 'Switched', resultRolledBack: 'Undone', resultRestored: 'Restored', backupAt: 'Backup', replacedAt: 'Replaced version saved at',
     originalsTitle: 'Original backup', restoreOriginal: 'Restore to before install', resultOriginal: 'Original files restored', viewOriginal: 'View original',
+    originalDate: date => `(backup from ${date})`, alreadyOriginal: 'Already at the pre-install state', originalCycleEnded: 'Installation cycle ended; snapshot retired',
+    reconstructed: 'Reconstructed: may include other changes made after installation', confirmReconstructed: 'Confirm reconstructed restore (backed up)',
     originallyAbsent: 'Did not exist · no bytes stored', originalPrivate: 'Original file content (sensitive values hidden)', originalBinary: 'Binary file; restoring will recover its complete bytes.',
     originalRestoreHint: 'Removes every recipe and restores complete original file bytes, including unrelated edits in these files. Hand edits block restoration; a forced restore backs up the current version first.',
     defaultOn: 'on by default', defaultOff: 'off by default', affects: 'Affects', viewText: 'View text', noOptions: 'This recipe has no options.',
@@ -200,7 +204,11 @@ function originalsBlock(target) {
       el('span', {class: 'mono', style: 'flex:1;min-width:180px;overflow-wrap:anywhere'}, file.path),
       el('span', {}, file.existed ? `${file.size} B` : t('originallyAbsent')),
       file.existed ? el('button', {class: 'btn btn-ghost btn-sm', onclick: () => viewOriginal(target, file)}, t('viewOriginal')) : null))),
-    el('div', {style: 'margin-top:12px'}, el('button', {class: 'btn btn-danger', onclick: () => undoFlow(target, true, true)}, t('restoreOriginal'))));
+    original.reconstructed ? note('warn', t('reconstructed'), original.reasons?.map(row => `${row.path}: ${row.reason}`)) : null,
+    el('div', {style: 'margin-top:12px'}, el('button', {class: 'btn btn-danger', disabled: original.restorable === false,
+      onclick: () => undoFlow(target, true, true)}, t('restoreOriginal')),
+      el('span', {class: 'group-note'}, ' ', original.ended ? t(original.alreadyOriginal ? 'alreadyOriginal' : 'originalCycleEnded')
+        : t('originalDate', original.capturedAt.slice(0, 10)))));
 }
 async function viewOriginal(target, file) {
   try {
@@ -429,7 +437,9 @@ async function undoFlow(target, all, original = false) {
       host.textContent = '';
       host.append(...planNodes(planned, now ? `${now.name} v${now.version}` : '—', planned.restores ? `${planned.restores.name} v${planned.restores.version}` : t('original'),
         () => load(true)).filter(Boolean));
-      apply.disabled = Boolean(planned.blocked?.length);
+      if (original && planned.reconstructed && !force) host.append(note('warn', t('reconstructed'), [
+        el('button', {class: 'btn btn-danger', onclick: () => load(true)}, t('confirmReconstructed'))]));
+      apply.disabled = Boolean(planned.blocked?.length) || Boolean(planned.noChange);
     } catch (error) { host.textContent = ''; errorLine.hidden = false; errorLine.textContent = error.message; }
   };
   await load(false);

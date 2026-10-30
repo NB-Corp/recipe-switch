@@ -129,7 +129,7 @@ export async function writeFile(file, bytes, options = {}) {
   try {
     if (boundary) await assertBoundary(temp, boundary);
     if (bytes !== null) {
-      await fs.writeFile(temp, bytes, {flag: 'wx'}); ownTemp = true;
+      await fs.writeFile(temp, bytes, {flag: 'wx', mode: options.mode ?? 0o600}); ownTemp = true;
       if (options.durable) await syncFile(temp);
     }
     if (boundary) await assertBoundary(file, boundary);

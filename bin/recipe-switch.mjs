@@ -123,8 +123,12 @@ export async function main(argv = process.argv.slice(2), service = new Service()
     const original = await service.originals({harness, home: flags.home});
     if (flags.json) { console.log(JSON.stringify(original, null, 2)); return original; }
     if (!original) { console.log('No original snapshot for this target.'); return null; }
+    if (original.ended) { console.log(original.alreadyOriginal ? '已经是装之前的状态 / Already at the pre-install state' : '安装周期已结束，快照已退役 / Installation cycle ended; snapshot retired'); return original; }
     console.log(`Original backup: ${original.capturedAt}\nManifest: ${original.manifest}`);
-    for (const file of original.files) console.log(`${file.path}\n  ${file.existed ? `${file.size} bytes  sha256 ${file.hash}  mtime ${file.mtime ?? 'unknown'}` : 'did not exist; no bytes stored'}`);
+    for (const file of original.files) {
+      console.log(`${file.path}\n  ${file.existed ? `${file.size} bytes  sha256 ${file.hash}  mtime ${file.mtime ?? 'unknown'}` : 'did not exist; no bytes stored'}`);
+      if (file.reconstructed) console.log(`  重建版本：可能包含安装后的其它修改 / Reconstructed: may include other changes made after installation\n  ${file.reason}`);
+    }
     return original;
   }
   if (command === 'restore-original') {
@@ -135,7 +139,7 @@ export async function main(argv = process.argv.slice(2), service = new Service()
     if (!flags.yes) { console.log('\nDry run. Re-run with --yes to apply.'); return planned; }
     if (planned.blocked.length) { process.exitCode = 2; return planned; }
     const result = await service.apply(planned.id);
-    console.log(`\n${result.message}\nBackup: ${result.backup}`);
+    console.log(`\n${result.message}${result.backup ? `\nBackup: ${result.backup}` : ''}`);
     for (const version of result.replacedVersions ?? []) console.log(`被替换的版本保存在 ${version.saved}`);
     return result;
   }

@@ -2,6 +2,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {readFile, writeFile, sha256, assertBoundary, captureBoundary, toPosix} from './fsx.mjs';
+import {privateDirectory} from './private-storage.mjs';
+
+export const RECONSTRUCTED_WARNING = '重建版本：可能包含安装后的其它修改 / Reconstructed: may include other changes made after installation';
 
 export function originalManifestPath(store, harness, home) {
   if (!/^[a-z0-9-]+$/.test(harness)) throw new Error('Invalid harness id');
@@ -31,8 +34,9 @@ export async function originalBytes(store, entry) {
 export async function putBlob(store, bytes) {
   const hash = sha256(bytes), dir = path.join(store.home, 'blobs'), file = path.join(dir, hash);
   await assertBoundary(file, await captureBoundary(store.home));
-  await fs.mkdir(dir, {recursive: true});
-  if (await readFile(file) === null) await writeFile(file, bytes, {expected: null, durable: true});
+  await privateDirectory(dir);
+  if (process.platform !== 'win32' && await readFile(file) !== null) await fs.chmod(file, 0o600);
+  if (await readFile(file) === null) await writeFile(file, bytes, {expected: null, durable: true, mode: 0o600});
   else await originalBytes(store, {existed: true, hash, size: bytes.length, path: toPosix(file)});
   return hash;
 }
@@ -51,8 +55,9 @@ export async function prepareOriginals(store, harness, home, candidates) {
     const stat = await fs.stat(candidate.path).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
     value.files.push({path: file, boundary: candidate.boundary, existed: bytes !== null,
       hash: bytes === null ? null : await putBlob(store, bytes), size: bytes?.length ?? 0,
-      mtime: bytes === null || candidate.reconstructed ? null : stat?.mtime.toISOString() ?? null, capturedAt: now,
-      ...(candidate.reconstructed ? {source: 'prior-operation-record'} : {})});
+      mtime: bytes === null || candidate.source ? null : stat?.mtime.toISOString() ?? null, capturedAt: now,
+      ...(candidate.source ? {source: candidate.source} : {}),
+      ...(candidate.reconstructed ? {reconstructed: true, reason: candidate.reason} : {})});
     changed = true;
   }
   return changed ? {path: originalManifestPath(store, harness, home), value} : null;
@@ -60,7 +65,7 @@ export async function prepareOriginals(store, harness, home, candidates) {
 export async function publishOriginals(store, staged) {
   if (!staged) return;
   await assertBoundary(staged.path, await captureBoundary(store.home));
-  await writeFile(staged.path, Buffer.from(JSON.stringify(staged.value, null, 2) + '\n'), {durable: true});
+  await writeFile(staged.path, staged.value === null ? null : Buffer.from(JSON.stringify(staged.value, null, 2) + '\n'), {durable: true});
 }
 
 /** Called only after restore-original committed and removed the target's stack. */
@@ -86,8 +91,10 @@ export async function collectOrphanBlobs(store) {
     if (!entry.isDirectory()) continue;
     const file = path.join(backups, entry.name, 'index.json'); await assertBoundary(file, boundary);
     const bytes = await readFile(file);
-    if (bytes !== null) for (const row of JSON.parse(bytes.toString('utf8')))
+    if (bytes !== null) for (const row of JSON.parse(bytes.toString('utf8'))) {
+      if (row.blob) referenced.add(row.blob.hash);
       for (const version of row.laterVersions ?? []) referenced.add(version.hash);
+    }
   }
   const dir = path.join(store.home, 'blobs'); await assertBoundary(dir, boundary);
   const entries = await fs.readdir(dir).catch(error => { if (error.code === 'ENOENT') return []; throw error; });

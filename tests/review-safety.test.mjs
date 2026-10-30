@@ -208,7 +208,7 @@ test('R12: forced retirement backs up the edited live bytes and rollback restore
   const planned = await preview(b, [], {force: true}), result = await applyPlan(b.store, planned);
   assert.equal(await exists(file), false);
   const index = JSON.parse(await fs.readFile(path.join(result.backup, 'index.json'), 'utf8'));
-  assert.equal(await fs.readFile(path.join(result.backup, index[0].copy), 'utf8'), 'USER EDIT');
+  assert.equal(await fs.readFile(path.join(b.store.home, 'blobs', index[0].blob.hash), 'utf8'), 'USER EDIT');
   await applyUndo(b.store, await undoPlan(b, {}));
   assert.equal(await fs.readFile(file, 'utf8'), 'USER EDIT');
 });
