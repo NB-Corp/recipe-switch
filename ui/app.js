@@ -733,7 +733,7 @@ function configure(target, recipe, {recipeOptions} = {}) {
         () => { force = true; run(); }, target).filter(Boolean));
       apply.disabled = Boolean(planned.blocked?.length) || !planned.files?.length;
       if (planned.blocked?.length) { errorLine.hidden = false; errorLine.textContent = t('resolveDriftFirst'); errorLine.style.color = 'var(--ink-3)'; }
-      else errorLine.style.color = '';
+      else { errorLine.style.color = ''; }
     } catch (error) {
       if (mine !== seq) return;
       planHost.textContent = ''; errorLine.hidden = false; errorLine.textContent = error.message; errorLine.style.color = '';
