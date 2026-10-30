@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {sandbox, exists} from './helpers.mjs';
+import {sandbox, exists, joinText, textOf} from './helpers.mjs';
+import {resolve} from '../src/i18n.mjs';
 import {Store, plan, applyPlan, planRestoreOriginal, applyRestoreOriginal, status} from '../src/engine.mjs';
 import {readOriginals, originalBytes} from '../src/originals.mjs';
 import {fileUnit} from '../src/drivers/common.mjs';
@@ -57,7 +58,7 @@ test('originals: whole-file hand edits block restoration; force backs up the com
   await put(file, before); await change(b, 'fixture', 'MAIN');
   const edited = (await fs.readFile(file, 'utf8')).replace('keep', 'USER MODEL'); await put(file, edited);
   const blocked = await planRestoreOriginal(b.store, 'fixture', home);
-  assert.equal(blocked.drift.length, 1); assert.match(blocked.blocked.join('\n'), /hand edit/);
+  assert.equal(blocked.drift.length, 1); assert.match(joinText(blocked.blocked), /hand edit/);
   await assert.rejects(applyRestoreOriginal(b.store, blocked), /Blocked/);
   assert.equal(await fs.readFile(file, 'utf8'), edited);
   const forced = await planRestoreOriginal(b.store, 'fixture', home, {force: true}), result = await applyRestoreOriginal(b.store, forced);
@@ -204,13 +205,13 @@ test('O02/O03: incomplete legacy records are labelled reconstructed per file and
   }
   await b.service.store.save(state); await put(file, (await fs.readFile(file, 'utf8')).replace('BASE', 'LATER'));
   const view = await b.service.originals({harness: 'opencode'});
-  assert.equal(view.reconstructed, true); assert.match(view.reasons[0].reason, /No earliest whole-file/);
+  assert.equal(view.reconstructed, true); assert.match(textOf(view.reasons[0].reason), /No earliest whole-file/);
   const p = await b.service.previewOriginal({harness: 'opencode'});
-  assert.match(p.blocked.join('\n'), /重建版本.*--force/);
+  assert.match(joinText(p.blocked), /reconstructed.*--force/);
   await assert.rejects(b.service.apply(p.id), /Blocked/);
   const {main} = await import('../bin/recipe-switch.mjs'), log = [], output = console.log;
   console.log = (...xs) => log.push(xs.join(' '));
-  try { await main(['originals', 'opencode'], b.service); } finally { console.log = output; }
+  try { await main(['originals', 'opencode', '--lang', 'zh'], b.service); } finally { console.log = output; }
   assert.match(log.join('\n'), /重建版本：可能包含安装后的其它修改/);
   const force = await b.service.previewOriginal({harness: 'opencode', force: true}); assert.deepEqual(force.blocked, []);
 });
@@ -264,7 +265,10 @@ test('O04 UI: both languages show dated backup, reconstructed confirmation and d
   const block = app.slice(app.indexOf('function originalsBlock('), app.indexOf('async function viewOriginal('));
   const el = (tag, attrs, ...children) => ({tag, ...attrs, children: children.flat(Infinity).filter(Boolean)});
   for (const lang of ['zh', 'en']) {
-    const context = {el, fmtTime: value => value, note: (kind, title, items) => ({kind, title, children: items}), undoFlow() {}, viewOriginal() {}};
+    const context = {el, fmtTime: value => value, displayPath: value => value, pathRow: value => value,
+      msg: item => typeof item === 'string' ? item : resolve(item, lang).text,
+      msgDetail: item => resolve(item, lang).detail,
+      note: (kind, title, items) => ({kind, title, children: items}), undoFlow() {}, viewOriginal() {}};
     vm.createContext(context); vm.runInContext(strings + `\nconst t=(key,...args)=>typeof STRINGS.${lang}[key]==='function'?STRINGS.${lang}[key](...args):STRINGS.${lang}[key];\n` + block + ';globalThis.render=originalsBlock;', context);
     const active = context.render({harness: 'fixture', originals: {capturedAt: '2026-10-31T00:00:00Z', restorable: true, files: []}});
     assert.match(JSON.stringify(active), lang === 'zh' ? /2026-10-31 的备份/ : /backup from 2026-10-31/);

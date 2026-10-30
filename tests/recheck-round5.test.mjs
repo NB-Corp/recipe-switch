@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
-import {sandbox, exists} from './helpers.mjs';
+import {sandbox, exists, joinText} from './helpers.mjs';
 import {Store, plan, applyPlan, status} from '../src/engine.mjs';
 import {fileUnit} from '../src/drivers/common.mjs';
 import {collectOrphanBlobs} from '../src/originals.mjs';
@@ -31,7 +31,7 @@ for (const replaced of [false, true]) test(`R24/R22: registered partial temp ${r
   await b.store.load(); await b.store.load();
   assert.equal(await exists(b.store.pending), false); assert.equal(await fs.readFile(b.file, 'utf8'), 'MANAGED 1');
   assert.equal(await exists(row.temp), replaced);
-  if (replaced) { assert.equal(await fs.readFile(row.temp, 'utf8'), 'USER REPLACEMENT'); assert.match(b.store.warnings.join('\n'), /路径已被替换，未删除/); }
+  if (replaced) { assert.equal(await fs.readFile(row.temp, 'utf8'), 'USER REPLACEMENT'); assert.match(joinText(b.store.warnings), /Path replaced; not deleted/); }
 });
 
 test('R24: journal path with traversal is rejected before cleanup or compensation', async t => {
@@ -51,7 +51,7 @@ test('R24: replaced archived displaced inode is neither restored nor deleted', a
   assert.ok(row.displacedIdentity.ino); await fs.rename(row.archive, row.archive + '.original'); await fs.writeFile(row.archive, 'USER ARCHIVE');
   await b.store.load(); assert.equal(await exists(b.store.pending), false);
   assert.equal(await fs.readFile(row.archive, 'utf8'), 'USER ARCHIVE'); assert.equal(await fs.readFile(b.file, 'utf8'), 'MANAGED 3');
-  assert.match(b.store.warnings.join('\n'), /路径已被替换，未删除/);
+  assert.match(joinText(b.store.warnings), /Path replaced; not deleted/);
 });
 
 for (const replaced of [false, true]) test(`R25: interrupted probe reclaims only registered identities (${replaced ? 'replacement kept' : 'files and new directories removed'})`, async t => {
@@ -63,7 +63,7 @@ for (const replaced of [false, true]) test(`R25: interrupted probe reclaims only
   if (replaced) { await fs.rename(record.probe, record.probe + '.original'); await fs.writeFile(record.probe, 'USER PROBE'); }
   await b.store.load(); await b.store.load();
   assert.equal(await exists(dir), false); assert.equal(await exists(record.link), false);
-  if (replaced) { assert.equal(await fs.readFile(record.probe, 'utf8'), 'USER PROBE'); assert.match(b.store.warnings.join('\n'), /路径已被替换，未删除/); }
+  if (replaced) { assert.equal(await fs.readFile(record.probe, 'utf8'), 'USER PROBE'); assert.match(joinText(b.store.warnings), /Path replaced; not deleted/); }
   else assert.equal(await exists(b.home), false);
 });
 
@@ -102,18 +102,18 @@ test('R27: capability loss in compensation stays pending through second load, bl
   const b = await box(t), p = await preview(b, 'MANAGED 2'), link = fs.link, save = b.store.save;
   b.store.save = async () => { fs.link = async (from, to) => { if (to === b.file) throw Object.assign(Error('capability lost'), {code: 'ENOTSUP'}); return link(from, to); }; throw Error('state save failed'); };
   try {
-    await assert.rejects(applyPlan(b.store, p), /回滚没能完成.*Current content is/);
+    await assert.rejects(applyPlan(b.store, p), /Rollback could not complete.*Current content is/);
     assert.equal(JSON.parse(await fs.readFile(b.store.pending)).files[0].recovery.phase, 'compensation-pending');
     assert.equal(await fs.readFile(b.file, 'utf8'), 'MANAGED 2');
     await assert.rejects(b.store.load(), /filesystem no longer supports safe writes/);
     assert.equal(await exists(b.store.pending), true); assert.equal(await fs.readFile(b.file, 'utf8'), 'MANAGED 2');
     assert.equal((await b.store.readState()).targets[p.key].stack.length, 1);
-    await assert.rejects(preview(b, 'MANAGED 3'), /回滚没能完成/);
+    await assert.rejects(preview(b, 'MANAGED 3'), /Rollback could not complete/);
     const {main} = await import('../bin/recipe-switch.mjs');
     await assert.rejects(main(['install', 'fixture', 'r@1'], {preview: () => preview(b, 'MANAGED 3')}), /backup:/);
     b.service.store = b.store;
     b.service.targets = async () => [{driver: {id: 'fixture', name: 'Fixture', detect: async () => ({present: true})}, home: b.home}];
-    const row = (await b.service.overview()).targets[0]; assert.match(row.error, /回滚没能完成.*Current content is/);
+    const row = (await b.service.overview()).targets[0]; assert.match(row.error, /Rollback could not complete.*Current content is/);
   } finally { fs.link = link; b.store.save = save; }
   await b.store.load(); assert.equal(await exists(b.store.pending), false); assert.equal(await fs.readFile(b.file, 'utf8'), 'MANAGED 1');
   assert.deepEqual((await status(b.store, 'fixture', b.home)).drift, []);
@@ -148,5 +148,5 @@ test('R24: replaced compensation temp is preserved while a new computed name fin
   await fs.rename(temp, temp + '.owned'); await fs.writeFile(temp, 'USER COMPENSATION TEMP');
   await b.store.load(); await b.store.load();
   assert.equal(await fs.readFile(temp, 'utf8'), 'USER COMPENSATION TEMP'); assert.equal(await exists(b.store.pending), false);
-  assert.equal(await fs.readFile(b.file, 'utf8'), 'MANAGED 1'); assert.match(b.store.warnings.join('\n'), /路径已被替换，未删除/);
+  assert.equal(await fs.readFile(b.file, 'utf8'), 'MANAGED 1'); assert.match(joinText(b.store.warnings), /Path replaced; not deleted/);
 });

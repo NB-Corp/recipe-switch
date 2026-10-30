@@ -4,8 +4,6 @@ import path from 'node:path';
 import {readFile, writeFile, sha256, assertBoundary, captureBoundary, toPosix} from './fsx.mjs';
 import {privateDirectory} from './private-storage.mjs';
 
-export const RECONSTRUCTED_WARNING = '重建版本：可能包含安装后的其它修改 / Reconstructed: may include other changes made after installation';
-
 export function originalManifestPath(store, harness, home) {
   if (!/^[a-z0-9-]+$/.test(harness)) throw new Error('Invalid harness id');
   const scope = sha256(Buffer.from(toPosix(path.resolve(home)).toLowerCase())).slice(0, 20);

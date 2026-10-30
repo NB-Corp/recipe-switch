@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {sandbox, tree, install, undo, GWT, KIKI_RECIPES, exists} from './helpers.mjs';
+import {sandbox, tree, install, undo, GWT, KIKI_RECIPES, exists, joinText} from './helpers.mjs';
 import {loadSource} from '../src/sources.mjs';
 
 const GWT_KEY = 'gpt-with-taste@0.1.0';
@@ -43,7 +43,7 @@ test('codex: a gpt-with-taste installer-managed home is detected and not taken o
   await fs.writeFile(file('codex/prompts/gpt-with-taste/main.md'), 'x');
   await fs.writeFile(file('codex/config.toml'), `model_instructions_file = "${file('codex/prompts/gpt-with-taste/main.md').replaceAll('\\', '/')}"\n`);
   const planned = await service.preview({harness: 'codex', recipe: GWT_KEY});
-  assert.match(planned.blocked.join('\n'), /gpt-with-taste install\.mjs/);
+  assert.match(joinText(planned.blocked), /gpt-with-taste scripts\/install\.mjs --restore/);
   await assert.rejects(service.apply(planned.id), /blocked/);
 });
 
@@ -96,7 +96,7 @@ test('pi: built-in extension; switching rewrites only recipe.json; foreign gpt-w
   assert.deepEqual(await tree(dir), before);
   await fs.writeFile(file('pi/agent/settings.json'), '{"packages": ["git:github.com/NB-Corp/gpt-with-taste"]}');
   const blocked = await service.preview({harness: 'pi', recipe: GWT_KEY});
-  assert.match(blocked.blocked.join('\n'), /gpt-with-taste Pi package/);
+  assert.match(joinText(blocked.blocked), /gpt-with-taste Pi package/);
 });
 
 test('dsh: one target per profile; bundle + dependency + mounted copy; uninstall is exact', async t => {

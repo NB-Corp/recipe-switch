@@ -4,8 +4,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {exists, toPosix} from '../fsx.mjs';
+import {exists, toPosix, displayPath} from '../fsx.mjs';
 import {fileUnit, jsonItemUnit, readJson, homeDir} from './common.mjs';
+import {note} from '../i18n.mjs';
 
 const PLUGINS = fileURLToPath(new URL('../../plugins/', import.meta.url));
 const json = value => JSON.stringify(value, null, 2) + '\n';
@@ -19,8 +20,8 @@ const readPlugin = (dir, file) => fs.readFile(path.join(PLUGINS, dir, file));
 async function readSnapshot(file) { const value = await readJson(file); return value?.managedBy === 'recipe-switch' ? value : null; }
 
 export const pi = {
-  id: 'pi', name: 'Pi', mechanism: 'Built-in recipe-switch extension (auto-discovered user extension)',
-  steer: 'User, Sub and completed-result Steer through the extension',
+  id: 'pi', name: 'Pi', mechanism: note('mechanism.pi'),
+  steer: note('steer.pi'),
   resolveHome: env => path.resolve(env.PI_CODING_AGENT_DIR || path.join(homeDir(env), '.pi', 'agent')),
   options: [{key: 'providers', label: 'Providers (comma separated, empty = all)', type: 'text'},
     {key: 'modelIdPattern', label: 'Model id regex (empty = all)', type: 'text'}],
@@ -30,13 +31,13 @@ export const pi = {
     for (const entry of [...(settings?.packages ?? []), ...(settings?.extensions ?? [])]) {
       const source = typeof entry === 'string' ? entry : entry?.source;
       if (typeof source === 'string' && /gpt-with-taste/i.test(source))
-        foreign.push({what: 'gpt-with-taste Pi package', detail: `settings.json loads ${source}; two behavior extensions would both inject`, blocking: true});
+        foreign.push({what: note('foreign.pi.gwtPackage', {source: displayPath(toPosix(source))}), detail: note('foreign.pi.gwtPackageDetail', {source: displayPath(toPosix(source))}), blocking: true});
     }
     const ext = path.join(home, 'extensions');
     for (const name of await fs.readdir(ext).catch(() => [])) {
       if (name === 'recipe-switch') continue;
       const manifest = await readJson(path.join(ext, name, 'package.json'));
-      if (manifest?.name?.startsWith('gpt-with-taste')) foreign.push({what: 'gpt-with-taste Pi extension', detail: `extensions/${name}`, blocking: true});
+      if (manifest?.name?.startsWith('gpt-with-taste')) foreign.push({what: note('foreign.pi.gwtExtension', {name}), detail: `extensions/${name}`, blocking: true});
     }
     const snap = await readSnapshot(path.join(ext, 'recipe-switch', 'recipe.json'));
     return {present, live: snap ? [{label: `${snap.recipe.name} ${snap.recipe.version}`, where: 'extensions/recipe-switch', revision: snap.recipe.revision}] : [], foreign};
@@ -54,15 +55,15 @@ export const pi = {
     units.push(fileUnit(path.join(dir, 'package.json'), json({name: 'recipe-switch-pi', private: true, type: 'module',
       description: 'Managed by recipe-switch. Switch recipes with the loader; uninstall restores the previous state.', pi: {extensions: ['./index.js']}})));
     units.push(fileUnit(path.join(dir, 'recipe.json'), snapshot(recipe, scope)));
-    return {units, notes: ['Pi re-reads recipe.json on the next request; run /reload or start a new session after installing the extension.',
-      Object.keys(scope).length ? `Scope: ${JSON.stringify(scope)}` : 'Scope: every model (set providers / model pattern to narrow it).']};
+    return {units, notes: [note('pi.note.reload'),
+      Object.keys(scope).length ? note('pi.note.scope', {scope: JSON.stringify(scope)}) : note('pi.note.scopeAll')]};
   },
 };
 
 const PKG = 'dsh-recipe-switch';
 export const dsh = {
-  id: 'dsh', name: 'DeepSeek Harness', mechanism: 'Built-in recipe-switch Cordis bundle, one per profile',
-  steer: 'User, coordinator and subagent-report Steer at agent/pre-step',
+  id: 'dsh', name: 'DeepSeek Harness', mechanism: note('mechanism.dsh'),
+  steer: note('steer.dsh'),
   multi: true,
   resolveHome: env => path.resolve(env.DSH_HOME?.trim() ? env.DSH_HOME : path.join(homeDir(env), '.dsh')),
   /** Each profile is its own install target. */
@@ -77,8 +78,8 @@ export const dsh = {
   async detect(profile) {
     const manifest = await readJson(path.join(profile, 'package.json')), foreign = [];
     const bundles = manifest?.dsh?.profile?.bundles ?? [];
-    if (bundles.includes('dsh-gpt-with-taste')) foreign.push({what: 'dsh-gpt-with-taste bundle', detail: 'mounted in this profile; both would inject behavior text', blocking: true});
-    if (bundles.includes('dsh-kiki-recipe')) foreign.push({what: 'dsh-kiki-recipe bundle', detail: 'Kiki Recipes bound there would stack with this recipe', blocking: false});
+    if (bundles.includes('dsh-gpt-with-taste')) foreign.push({what: note('foreign.dsh.gwtBundle'), detail: note('foreign.dsh.gwtBundleDetail'), blocking: true});
+    if (bundles.includes('dsh-kiki-recipe')) foreign.push({what: note('foreign.dsh.kikiBundle'), detail: note('foreign.dsh.kikiBundleDetail'), blocking: false});
     const snap = await readSnapshot(path.join(profile, 'node_modules', PKG, 'recipe.json'));
     return {present: manifest !== null, live: snap ? [{label: `${snap.recipe.name} ${snap.recipe.version}`, where: `node_modules/${PKG}`, revision: snap.recipe.revision}] : [], foreign};
   },
@@ -102,7 +103,6 @@ export const dsh = {
       for (const [rel, bytes] of files) units.push(fileUnit(path.join(base, rel), bytes));
     units.push({type: 'jsonKey', path: path.join(profile, 'package.json'), pointer: ['dependencies', PKG], afterValue: `file:.recipe-switch/${PKG}`});
     units.push(jsonItemUnit(path.join(profile, 'package.json'), ['dsh', 'profile', 'bundles'], PKG));
-    return {units, notes: ['Takes effect in the next DSH process started with this profile; a running process keeps its plugin generation.',
-      'Switching later rewrites only recipe.json; the plugin re-reads it before each step.']};
+    return {units, notes: [note('dsh.note.nextProcess'), note('dsh.note.switchLight')]};
   },
 };

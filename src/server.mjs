@@ -8,6 +8,7 @@ import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {Service} from './service.mjs';
+import {browserCatalog} from './i18n.mjs';
 
 const UI = fileURLToPath(new URL('../ui/', import.meta.url));
 const TYPES = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml'};
@@ -43,6 +44,7 @@ export function createServer({service = new Service(), token = crypto.randomByte
     'POST /api/config': body => service.saveConfig({...(body.sources ? {sources: body.sources} : {}), ...(body.gwt ? {gwt: body.gwt} : {})}),
     'POST /api/preview': async body => strip(await service.preview(body)),
     'POST /api/preview-undo': async body => strip(await service.previewUndo(body)),
+    'GET /api/drift-diff': (_, query) => service.driftDiff({harness: query.get('harness'), home: query.get('home') || undefined, path: query.get('path')}),
     'GET /api/originals': (_, query) => service.originals({harness: query.get('harness'), home: query.get('home') || undefined}),
     'GET /api/original-file': (_, query) => service.originalText({harness: query.get('harness'), home: query.get('home') || undefined, id: Number(query.get('id'))}),
     'POST /api/preview-original': async body => strip(await service.previewOriginal(body)),
@@ -75,6 +77,7 @@ export function createServer({service = new Service(), token = crypto.randomByte
         return send(200, await handler(body, url.searchParams));
       }
       if (req.method !== 'GET') return send(405, {error: 'Method not allowed'});
+      if (url.pathname === '/i18n.js') return send(200, `globalThis.RECIPE_SWITCH_MESSAGES = ${JSON.stringify(browserCatalog())};`, TYPES['.js']);
       const rel = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
       const file = path.resolve(UI, rel);
       if (!file.startsWith(UI)) return send(404, {error: 'Not found'});
@@ -83,7 +86,7 @@ export function createServer({service = new Service(), token = crypto.randomByte
       if (rel === 'index.html') bytes = Buffer.from(bytes.toString('utf8').replace('__TOKEN__', token));
       return send(200, bytes, TYPES[path.extname(file)] ?? 'application/octet-stream');
     } catch (error) {
-      return send(400, {error: error.message});
+      return send(400, {error: error.message, ...(error.note ? {note: error.note} : {})});
     }
   });
   return {server, token};

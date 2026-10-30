@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {sandbox} from './helpers.mjs';
+import {sandbox, joinText} from './helpers.mjs';
 import {loadSource} from '../src/sources.mjs';
 import {createServer} from '../src/server.mjs';
 
@@ -37,7 +37,7 @@ test('R15: numeric option ids evaluate and list in TOML declaration order; unkno
   assert.equal(selected.texts.userSteer, recipe.texts.userSteer);
   await b.service.saveConfig({sources: [pkg]});
   const planned = await b.service.preview({harness: 'hermes', recipe: recipe.id, recipeOptions: {unknown: true}});
-  assert.match(planned.warnings.join('\n'), /Unknown recipe option unknown; ignored/);
+  assert.match(joinText(planned.warnings), /Unknown recipe option unknown; ignored/);
   assert.equal(planned.blocked.length, 0);
   const {server, token} = createServer({service: b.service});
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

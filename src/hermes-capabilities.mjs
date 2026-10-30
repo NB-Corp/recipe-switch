@@ -69,10 +69,7 @@ export async function probeHermes(home, {env = process.env} = {}) {
   const result = (registration, reason, source = null) => {
     const confirmed = registration && runtime.status === 'confirmed';
     const state = registration ? runtime.status : 'unsupported';
-    const statusText = state === 'confirmed' ? '已确认生效 / Confirmed active'
-      : state === 'registered' ? '已注册，尚未见到请求 / Registered; no request seen yet'
-      : state === 'unknown' ? '未知：请启动一次 Hermes / Unknown: start Hermes once'
-      : '不支持：只装每轮 steering / Unsupported: per-turn steering only';
+    const statusText = {id: `hermes.capability.${state}`, vars: {}};
     return {main: confirmed, sub: confirmed, userSteer: true, subSteer: true, llmRequest: registration,
       state, statusText, report: registration ? runtime.report : null, source, reason};
   };

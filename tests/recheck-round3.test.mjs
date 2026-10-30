@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
-import {sandbox, exists} from './helpers.mjs';
+import {sandbox, exists, joinText, textOf} from './helpers.mjs';
+import {replacedAtLine} from '../src/i18n.mjs';
 import {Store, plan, applyPlan, planUndo, applyUndo} from '../src/engine.mjs';
 import {fileUnit} from '../src/drivers/common.mjs';
 
@@ -40,7 +41,8 @@ for (const code of ['ENOTSUP', 'EPERM', 'EXDEV', 'EINVAL']) test(`R23/R20: ${cod
   fs.link = async () => { throw Object.assign(new Error('unsupported link'), {code}); };
   try {
     const planned = await preview(b, 'MANAGED 1');
-    assert.match(planned.blocked.join('\n'), /不支持硬链接.*does not support hard links/);
+    assert.equal(planned.blocked[0].text.id, 'safety.hardlinksUnsupported');
+    assert.match(joinText(planned.blocked), /does not support hard links/);
     await assert.rejects(applyPlan(b.store, planned), /blocked/);
     assert.equal(await exists(b.home), false); assert.equal(await exists(b.store.pending), false);
   } finally { fs.link = link; }
@@ -134,9 +136,9 @@ for (const [name, source, request, supported] of [
   assert.equal(row.capability.state, supported ? 'unknown' : 'unsupported');
   assert.equal(p.units.find(unit => unit.path.endsWith('plugin.yaml')).afterBytes.includes(Buffer.from('provides_middleware')), supported);
   if (!supported) {
-    assert.match(row.mechanism, /Main\/Sub unavailable/);
-    assert.ok(p.notes.some(note => note.includes(caps.reason)));
-    assert.ok(row.foreign.some(item => item.detail.includes(caps.reason)));
+    assert.match(textOf(row.mechanism), /Main\/Sub prompts unavailable/);
+    assert.ok(p.notes.some(item => (item.vars?.reason ?? '').includes(caps.reason)));
+    assert.ok(row.foreign.some(item => (item.detail?.vars?.reason ?? '').includes(caps.reason)));
   }
 });
 
@@ -147,7 +149,7 @@ test('R19: Python unavailable degrades to steering with a reason', async t => {
   const caps = await hermesCapabilities(home, {env});
   assert.equal(caps.llmRequest, false); assert.match(caps.reason, /Python unavailable/);
   const found = await hermes.detect(home, {env}), desired = await hermes.desired(recipe, home, {}, {env});
-  assert.match(found.mechanism, /Main\/Sub unavailable/); assert.match(desired.notes.join('\n'), /Python unavailable/);
+  assert.match(textOf(found.mechanism), /Main\/Sub prompts unavailable/); assert.match(joinText(desired.notes), /Python unavailable/);
 });
 
 test('R01: CLI and both UI result languages show the retained version actual path', async t => {
@@ -160,16 +162,18 @@ test('R01: CLI and both UI result languages show the retained version actual pat
     await main(['install', 'grok', recipe.key, '--yes'], b.service);
     result = await main(['uninstall', 'grok', '--yes'], b.service);
   } finally { console.log = original; }
-  assert.ok(log.some(line => line === `被替换的版本保存在 ${result.replacedVersions[0].saved}`));
+  assert.ok(log.some(line => line === replacedAtLine(result.replacedVersions[0].saved, 'en')));
   const app = await fs.readFile(new URL('../ui/app.js', import.meta.url), 'utf8');
   const functionText = app.slice(app.indexOf('function showResult('), app.indexOf('// ---------------------------------------------------------------- recipes screen'));
   for (const text of ['被替换的版本保存在', 'Replaced version saved at']) {
     let shown;
     const context = {el: (tag, attrs, ...children) => ({tag, ...attrs, children, addEventListener() {}}), t: key => key === 'replacedAt' ? text : key,
-      svg: () => null, ICON: {}, sheetBody: (...xs) => xs, sheetFoot: x => x, note: () => null, shortPath: x => x,
+      svg: () => null, ICON: {}, sheetBody: (...xs) => xs, sheetFoot: x => x, note: () => null,
+      msg: item => (typeof item === 'string' ? item : item?.id ?? ''), msgDetail: () => null, noteItems: list => (list ?? []).map(item => ({text: String(item)})),
+      pathRow: (full, options) => ({path: full, options, toString() { return `${full}`; }}), displayPath: value => value, shortPath: x => x,
       openSheet: options => { shown = options; return {close() {}}; }};
     vm.createContext(context); vm.runInContext(functionText + ';globalThis.show=showResult;', context);
-    context.show('Done', result);
+    context.show('Done', {...result, message: 'Uninstalled'});
     assert.ok(JSON.stringify(shown).includes(`${text} ${result.replacedVersions[0].saved}`));
   }
 });

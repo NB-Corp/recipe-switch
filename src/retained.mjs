@@ -4,7 +4,6 @@ import path from 'node:path';
 import {readFile, writeFile, sha256, assertBoundary, captureBoundary, toPosix, pathIdentity, sameIdentity, removeIdentified, replacedWarning} from './fsx.mjs';
 import {putBlob} from './originals.mjs';
 
-export const RETENTION_LIMIT = '被替换的版本会保留到这个工具的下一次操作；之后仍通过旧打开句柄写入的内容不保证保存。Replaced versions are retained until this tool’s next operation; later writes through an already-open old handle are not guaranteed to be saved.';
 const targetPaths = paths => new Set(paths.map(file => toPosix(path.resolve(file))));
 
 // Stage reference retirement in the same state commit as the new versions.

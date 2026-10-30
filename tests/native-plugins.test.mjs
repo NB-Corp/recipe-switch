@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {pathToFileURL, fileURLToPath} from 'node:url';
-import {sandbox, tree, install, undo, exists} from './helpers.mjs';
+import {sandbox, tree, install, undo, exists, joinText} from './helpers.mjs';
 import {kimiCode, hermes, openclaw, openclawConfig} from '../src/drivers/plugins.mjs';
 import {Store, plan, applyPlan, planUndo, applyUndo} from '../src/engine.mjs';
 
@@ -36,10 +36,10 @@ for (const id of ['kimi-code', 'hermes', 'openclaw']) test(`${id}: install → s
   const managed = await fs.readFile(snapshot);
   await fs.appendFile(snapshot, '\nhand edit');
   const blocked = await service.preview({harness: id, recipe: 'a'});
-  assert.match(blocked.blocked.join('\n'), /hand edit detected/);
+  assert.match(joinText(blocked.blocked), /hand edit detected/);
   await assert.rejects(service.apply(blocked.id), /blocked/);
   const removal = await service.previewUndo({harness: id, all: true});
-  assert.match(removal.blocked.join('\n'), /hand edit detected/);
+  assert.match(joinText(removal.blocked), /hand edit detected/);
   await fs.writeFile(snapshot, managed);
   await undo(service, id, {all: true});
   assert.deepEqual(await tree(dir), before);
@@ -84,12 +84,12 @@ test('Kimi: foreign SYSTEM and existing plugin id block without changing bytes',
   await put(file('kimi-code/SYSTEM.md'), '# My system prompt\n');
   const before = await tree(dir);
   const planned = await service.preview({harness: 'kimi-code', recipe: 'a'});
-  assert.match(planned.blocked.join('\n'), /Non-managed SYSTEM.md/);
+  assert.match(joinText(planned.blocked), /SYSTEM\.md/);
   assert.deepEqual(await tree(dir), before);
   await fs.rm(file('kimi-code/SYSTEM.md'));
   await put(file('kimi-code/plugins/installed.json'), JSON.stringify({version: 1, plugins: [{id: 'recipe-switch', enabled: true, root: 'example'}]}));
   const foreign = await service.preview({harness: 'kimi-code', recipe: 'a'});
-  assert.match(foreign.blocked.join('\n'), /Existing recipe-switch Kimi plugin/);
+  assert.match(joinText(foreign.blocked), /Existing recipe-switch Kimi plugin/);
 });
 
 test('Hermes: full Main/Sub middleware covers provider shapes, freezes sessions and keeps fresh per-turn steer', async t => {
@@ -106,8 +106,8 @@ test('Hermes: full Main/Sub middleware covers provider shapes, freezes sessions 
   t.diagnostic(result.stdout.trim());
   assert.match(await read('hermes/config.yaml'), /- recipe-switch # managed by recipe-switch/);
   assert.match(await read('hermes/plugins/recipe-switch/plugin.yaml'), /provides_middleware:\n  - llm_request/);
-  assert.match(planned.notes.join('\n'), /appended in full/);
-  assert.doesNotMatch(planned.notes.join('\n'), /7,600|omitted|4,000/);
+  assert.match(joinText(planned.notes), /frozen per session/);
+  assert.doesNotMatch(joinText(planned.notes), /7,600|omitted|4,000/);
 });
 
 test('OpenClaw: dependency-free installed entry injects role-correct hook results and sees switches without reload', async t => {
@@ -171,7 +171,7 @@ test('jsonArrayRecord: neighbours retain exact bytes, hand-edited owned record b
   let current = await fs.readFile(box.file, 'utf8');
   assert.ok(current.includes(neighbour));
   await fs.writeFile(box.file, current.replace('"enabled":true', '"enabled":false'));
-  assert.match((await planUndo(box.store, 'fixture', box.service.homes['kimi-code'].replace(/kimi-code$/, 'target'), {all: true})).blocked.join('\n'), /hand edit/);
+  assert.match(joinText((await planUndo(box.store, 'fixture', box.service.homes['kimi-code'].replace(/kimi-code$/, 'target'), {all: true})).blocked), /hand edit/);
   await fs.writeFile(box.file, current.replace('"version":1', '"version":2'));
   await box.remove();
   assert.equal(await fs.readFile(box.file, 'utf8'), original.replace('"version":1', '"version":2'));

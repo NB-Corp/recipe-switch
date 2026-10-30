@@ -3,12 +3,13 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {exists, readFile, decode, toPosix} from '../fsx.mjs';
+import {exists, readFile, decode, toPosix, displayPath} from '../fsx.mjs';
 import {MARK} from '../engine.mjs';
 import {inspectYamlList, pluginDisabled} from '../yaml-list.mjs';
 import {fileUnit, jsonItemUnit, readJson, homeDir} from './common.mjs';
 import {snapshot} from './builtin.mjs';
 import {probeHermes as hermesCapabilities} from '../hermes-capabilities.mjs';
+import {note} from '../i18n.mjs';
 
 const PLUGINS = fileURLToPath(new URL('../../plugins/', import.meta.url));
 const ID = 'recipe-switch';
@@ -25,7 +26,7 @@ async function snapAt(dir) {
 }
 const liveAt = (snap, where, enabled) => snap ? [{label: `${snap.recipe.name} ${snap.recipe.version}${enabled ? '' : ' (not enabled)'}`, where, revision: snap.recipe.revision, managed: true}] : [];
 async function identityInfo(home) {
-  return await exists(path.join(home, 'SOUL.md')) ? [{what: 'User identity SOUL.md', detail: 'Left unchanged; the plugin adds recipe context separately.', blocking: false}] : [];
+  return await exists(path.join(home, 'SOUL.md')) ? [{what: note('foreign.identity.soul'), detail: note('foreign.identity.soulDetail'), blocking: false}] : [];
 }
 
 async function kimiRegistry(home) {
@@ -38,15 +39,15 @@ async function kimiRegistry(home) {
 }
 export const kimiCode = {
   id: 'kimi-code', name: 'Kimi Code CLI',
-  mechanism: 'SYSTEM.md with ${base_prompt} + managed UserPromptSubmit plugin',
-  steer: 'User Steer on user turns; subagent profiles and steering are unchanged',
+  mechanism: note('mechanism.kimiCode'),
+  steer: note('steer.kimiCode'),
   resolveHome: env => userPath(env.KIMI_CODE_HOME || path.join(homeDir(env), '.kimi-code'), env),
   async detect(home) {
     const dir = path.join(home, 'plugins', 'managed', ID), snap = await snapAt(dir), foreign = [];
     const system = await readFile(path.join(home, 'SYSTEM.md'));
-    if (system !== null && !decode(system).includes(`<!-- ${MARK} -->`)) foreign.push({what: 'Non-managed SYSTEM.md', detail: 'Move SYSTEM.md aside before installing; recipe-switch does not merge a user prompt.', blocking: true});
+    if (system !== null && !decode(system).includes(`<!-- ${MARK} -->`)) foreign.push({what: note('foreign.kimi.system'), detail: note('foreign.kimi.systemDetail'), blocking: true});
     const {entry} = await kimiRegistry(home);
-    if (entry && entry.originalSource !== MARK) foreign.push({what: 'Existing recipe-switch Kimi plugin', detail: 'Remove or move the non-managed plugin registry entry first.', blocking: true});
+    if (entry && entry.originalSource !== MARK) foreign.push({what: note('foreign.kimi.registry'), detail: note('foreign.kimi.registryDetail'), blocking: true});
     return {present: await exists(home), live: liveAt(snap, 'SYSTEM.md + plugins/managed/recipe-switch', Boolean(entry?.enabled)), foreign};
   },
   async desired(recipe, home) {
@@ -57,17 +58,15 @@ export const kimiCode = {
     units.push({type: 'jsonArrayRecord', path: file, pointer: ['plugins'], value: ID,
       afterValue: {id: ID, root: toPosix(dir), source: 'local-path', enabled: true,
         installedAt: entry?.installedAt ?? new Date().toISOString(), originalSource: MARK}});
-    return {units, notes: ['Restart Kimi Code to load SYSTEM.md and the plugin after installation or Main changes. ${base_prompt} retains the built-in default main prompt; project agent.md, --agent-file and other bound profiles can override it.',
-      'User Steer is re-read from recipe.json on each UserPromptSubmit. System-triggered subagent turns do not fire that hook; subagent profiles are left unchanged.']};
+    return {units, notes: [note('kimi.note.restart'), note('kimi.note.steer')]};
   },
 };
 
-const HERMES_STEERING_ONLY = '未确认此 Hermes 支持 llm_request middleware，只装每轮 steering；主/子代理系统提示暂不可用';
 export {probeHermes as hermesCapabilities} from '../hermes-capabilities.mjs';
 
 export const hermes = {
-  id: 'hermes', name: 'Hermes Agent', mechanism: 'Full Main/Sub via session-frozen llm_request middleware + pre_llm_call; one YAML enabled-list item',
-  steer: 'User Steer for main turns; Sub Steer for delegated children',
+  id: 'hermes', name: 'Hermes Agent', mechanism: note('mechanism.hermes'),
+  steer: note('steer.hermes'),
   resolveHome: env => userPath(env.HERMES_HOME || (process.platform === 'win32'
     ? path.join(env.LOCALAPPDATA || path.join(homeDir(env), 'AppData', 'Local'), 'hermes')
     : path.join(homeDir(env), '.hermes')), env),
@@ -75,14 +74,12 @@ export const hermes = {
     const dir = path.join(home, 'plugins', ID), config = await readFile(path.join(home, 'config.yaml'));
     const state = inspectYamlList(decode(config)), disabled = pluginDisabled(state), foreign = await identityInfo(home);
     const capabilities = await hermesCapabilities(home, {env});
-    if (!capabilities.llmRequest) foreign.push({what: 'Main/Sub unavailable', detail: `${HERMES_STEERING_ONLY}。${capabilities.reason}`, blocking: false});
-    else foreign.push({what: 'Hermes Main/Sub', detail: capabilities.statusText, blocking: false});
-    if (disabled) foreign.push({what: 'Hermes plugin explicitly disabled', detail: 'Remove recipe-switch from plugins.disabled yourself before installing.', blocking: true});
+    if (!capabilities.llmRequest) foreign.push({what: note('foreign.hermes.steeringOnly'), detail: note('foreign.hermes.steeringOnlyDetail', {reason: capabilities.reason ?? ''}), blocking: false});
+    else foreign.push({what: note('foreign.hermes.mainSub'), detail: capabilities.statusText, blocking: false});
+    if (disabled) foreign.push({what: note('foreign.hermes.disabled'), detail: note('foreign.hermes.disabledDetail'), blocking: true});
     return {present: await exists(home), capabilities, capability: capabilities,
-      mechanism: capabilities.main ? `${this.mechanism} — ${capabilities.statusText}` : capabilities.llmRequest
-        ? `Main/Sub 待确认 / pending confirmation — ${capabilities.statusText}; per-turn steering via pre_llm_call`
-        : 'Main/Sub unavailable（不可用）; per-turn steering via pre_llm_call only',
-      live: liveAt(await snapAt(dir), capabilities.llmRequest ? `plugins/recipe-switch — ${capabilities.statusText}` : 'plugins/recipe-switch (steering only; Main/Sub unavailable)', state.present && !disabled), foreign};
+      mechanism: capabilities.llmRequest ? this.mechanism : note('mechanism.hermesSteeringOnly'),
+      live: liveAt(await snapAt(dir), 'plugins/recipe-switch', state.present && !disabled), foreign};
   },
   async desired(recipe, home, options = {}, {env = process.env} = {}) {
     if (pluginDisabled(inspectYamlList(decode(await readFile(path.join(home, 'config.yaml'))))))
@@ -96,15 +93,13 @@ export const hermes = {
       const manifest = units.find(unit => path.basename(unit.path) === 'plugin.yaml');
       manifest.afterBytes = Buffer.from(decode(manifest.afterBytes).replace('provides_middleware:\n  - llm_request\n', ''));
     }
-    const notes = capabilities.llmRequest ? [
-      `Main/Sub: ${capabilities.statusText}. 直接注册方法已找到；运行时回报确认前保持待确认。A direct registration method was found; runtime evidence is required to confirm activation.`,
-      'Restart Hermes after installing or updating plugin code. When llm_request fires, Main/Sub are appended in full and frozen per session_id on its first request for the running plugin; recipe switches apply to new sessions and preserve existing-session prompt bytes.',
-      'Chat system/developer messages, Anthropic system blocks, Responses instructions and Bedrock Converse system blocks are supported. Unknown request shapes or missing session ids are left unchanged.',
-      'Hermes codex_app_server, auxiliary calls and max-iteration summary calls bypass llm_request and do not receive this Main/Sub injection.'
-    ] : [HERMES_STEERING_ONLY, `Main/Sub unavailable: ${capabilities.reason}. Confirm Python and upgrade Hermes if needed, then reinstall. Restart Hermes after installing the steering plugin.`];
-    notes.push('User/Sub Steer are re-read on each pre_llm_call; delegated children use Sub Steer (platform=subagent). SOUL.md and AGENTS.md are left unchanged.');
+    const notes = capabilities.llmRequest
+      ? [capabilities.statusText, ...(!capabilities.main ? [note('hermes.note.pending')] : []),
+        note('hermes.note.middleware'), note('hermes.note.shapes'), note('hermes.note.bypass')]
+      : [note('hermes.note.steeringOnly'), note('hermes.note.steeringOnlyWhy', {reason: capabilities.reason ?? ''})];
+    notes.push(note('hermes.note.steer'));
     for (const role of ['userSteer', 'subSteer']) if ([...(recipe.texts[role] || '')].length > 10000)
-      notes.push(`Hermes ${role} exceeds the default 10,000-character hook-output budget; Hermes may spill it to a file and inject a preview.`);
+      notes.push(note('hermes.note.steerTooLong', {role}));
     return {units, notes};
   },
 };
@@ -125,10 +120,10 @@ async function openclawSettings(home, env) {
   return {file, config};
 }
 export const openclaw = {
-  id: 'openclaw', name: 'OpenClaw', mechanism: 'Native before_prompt_build plugin; strict-JSON enablement keys',
-  steer: 'User Steer; Sub and Sub Steer for subagent session keys',
+  id: 'openclaw', name: 'OpenClaw', mechanism: note('mechanism.openclaw'),
+  steer: note('steer.openclaw'),
   resolveHome: openclawHome,
-  options: [{key: 'grantConversationAccess', type: 'boolean', consent: true, label: 'Grant recipe-switch conversation access'}],
+  options: [{key: 'grantConversationAccess', type: 'boolean', consent: true, label: note('openclaw.option.grant')}],
   async detect(home, {env = process.env} = {}) {
     const dir = path.join(home, 'extensions', ID), {config} = await openclawSettings(home, env);
     const entry = config?.plugins?.entries?.[ID];
@@ -144,11 +139,7 @@ export const openclaw = {
       units.push(keyUnit(file, ['plugins', 'entries', ID, 'hooks', 'allowConversationAccess'], true));
     if (config?.plugins?.allow !== undefined) units.push({...jsonItemUnit(file, ['plugins', 'allow'], ID), preserveLayout: true});
     if (env.OPENCLAW_CONFIG_PATH?.trim()) for (const unit of units) if (unit.path === file) unit.boundary = path.dirname(file);
-    return {units, notes: [...(permission === undefined ? [options.grantConversationAccess === true
-      ? 'You explicitly granted conversation access to recipe-switch; this preview writes plugins.entries.recipe-switch.hooks.allowConversationAccess=true. Uninstall restores its original state.'
-      : 'OpenClaw prerequisite: non-bundled plugins require plugins.entries.recipe-switch.hooks.allowConversationAccess=true. Permission stays unset; enable it yourself or actively select “Grant recipe-switch conversation access” in Tool settings. Until then the hook is inactive.'] : []),
-      'Restart the OpenClaw Gateway after installing or changing plugin code. Later recipe switches are re-read on the next before_prompt_build.',
-      'Main + User Steer apply to regular sessions. Sub + Sub Steer apply when ctx.sessionKey is subagent:<id> or agent:<agent>:subagent:<id>; absent session keys use Main.',
-      `Config: ${toPosix(file)}. Only plugin enablement, conversation-hook access and an existing allowlist are edited; AGENTS.md/SOUL.md stay unchanged.`]};
+    return {units, notes: [...(permission === undefined ? [note(options.grantConversationAccess === true ? 'openclaw.note.granted' : 'openclaw.note.prerequisite')] : []),
+      note('openclaw.note.restart'), note('openclaw.note.scope'), note('openclaw.note.config', {file: displayPath(toPosix(file), {env})})]};
   },
 };

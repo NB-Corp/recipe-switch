@@ -1,7 +1,9 @@
 // Small filesystem helpers: exact bytes, atomic replace, hashing.
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import {note, format, messageError} from './i18n.mjs';
 
 export const sha256 = bytes => crypto.createHash('sha256').update(bytes ?? Buffer.alloc(0)).digest('hex');
 
@@ -71,8 +73,8 @@ export async function pathIdentity(file) {
   return stat?.isSymbolicLink() ? null : inodeIdentity(stat);
 }
 export const sameIdentity = (a, b) => Boolean(a && b && a.dev === b.dev && a.ino === b.ino);
-export const replacedWarning = file => `路径已被替换，未删除：${toPosix(file)} / Path replaced; not deleted: ${toPosix(file)}`;
-export async function removeIdentified(file, identity, {directory = false, boundary, warn = message => process.emitWarning(message)} = {}) {
+export const replacedWarning = file => note('safety.pathReplaced', {path: toPosix(file)});
+export async function removeIdentified(file, identity, {directory = false, boundary, warn = message => process.emitWarning(typeof message === 'string' ? message : format(message))} = {}) {
   const stat = await fs.lstat(file, {bigint: true}).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
   if (!stat) return;
   if (stat.isSymbolicLink() || !sameIdentity(inodeIdentity(stat), identity)) { warn(replacedWarning(file)); return; }
@@ -90,7 +92,7 @@ async function cleanProbe(record, warn) {
     await removeIdentified(item.path, item.identity, {directory: true, warn, boundary: item.boundary ?? record.boundary});
   }
 }
-export async function recoverProbes(stateDir, warn = message => process.emitWarning(message)) {
+export async function recoverProbes(stateDir, warn = message => process.emitWarning(typeof message === 'string' ? message : format(message))) {
   return withLock(stateDir, () => recoverProbeRecords(stateDir, warn), 'probe.lock');
 }
 async function recoverProbeRecords(stateDir, warn) {
@@ -144,12 +146,10 @@ async function runHardlinkProbe(file, boundary, stateDir) {
     linking = true; await fs.link(source, record.link);
     return null;
   } catch (error) {
-    const reason = linking && unsupportedLink(error)
-      ? '该位置的文件系统不支持硬链接（常见于 FAT/exFAT/部分网络盘），recipe-switch 无法保证安全写入。This location’s filesystem does not support hard links (common on FAT/exFAT and some network drives); recipe-switch cannot guarantee safe writes.'
-      : '无法完成硬链接安全探测；请检查目录访问权限。Could not complete the hard-link safety probe; check directory access permissions.';
-    return `${reason} ${toPosix(dir)} (${error.code ?? error.message})`;
+    return {id: linking && unsupportedLink(error) ? 'safety.hardlinksUnsupported' : 'safety.probeFailed',
+      vars: {path: toPosix(dir), error: error.code ?? error.message}};
   } finally {
-    try { await cleanProbe(record, message => process.emitWarning(message)); await writeFile(journal, null, {durable: true}); await rmdirIfEmpty(path.dirname(journal)); }
+    try { await cleanProbe(record, message => process.emitWarning(typeof message === 'string' ? message : format(message))); await writeFile(journal, null, {durable: true}); await rmdirIfEmpty(path.dirname(journal)); }
     finally { activeProbes.delete(id); }
   }
 }
@@ -158,7 +158,7 @@ async function runHardlinkProbe(file, boundary, stateDir) {
 export async function restoreDisplaced(file, displaced, boundary, {sourceBoundary = boundary, identity} = {}) {
   if (boundary) await assertBoundary(file, boundary);
   if (sourceBoundary) await assertBoundary(displaced, sourceBoundary);
-  if (identity && !sameIdentity(await pathIdentity(displaced), identity)) throw new Error(replacedWarning(displaced));
+  if (identity && !sameIdentity(await pathIdentity(displaced), identity)) throw messageError(replacedWarning(displaced));
   const collision = () => new Error(`Changed during operation; newer file kept at ${toPosix(file)}; displaced version kept at ${toPosix(displaced)}`);
   try { await publishExclusive(displaced, file); }
   catch (error) {
@@ -228,7 +228,7 @@ export async function writeFile(file, bytes, options = {}) {
         throw new Error(`Changed during operation; displaced version differs from preview: ${toPosix(file)}`);
       await onStage('publishing');
       if (bytes !== null) {
-        if (!sameIdentity(await pathIdentity(temp), ownTemp)) throw new Error(replacedWarning(temp));
+        if (!sameIdentity(await pathIdentity(temp), ownTemp)) throw messageError(replacedWarning(temp));
         await publishExclusive(temp, file);
       }
       published = true;
@@ -343,6 +343,19 @@ export async function listFiles(dir) {
 }
 
 export const toPosix = value => value.replaceAll('\\', '/');
+
+/** Home-relative display form; middle-ellipsized when longer than max. */
+export function displayPath(value, {max = 48, env = process.env} = {}) {
+  let p = toPosix(String(value ?? ''));
+  const rawHome = env.RECIPE_SWITCH_USER_HOME || (process.platform === 'win32' ? env.USERPROFILE : env.HOME) || os.homedir();
+  const home = toPosix(path.resolve(rawHome));
+  if (home && (p === home || p.startsWith(home + '/'))) p = '~' + p.slice(home.length);
+  if (p.length > max) {
+    const head = Math.ceil((max - 1) / 2), tail = Math.floor((max - 1) / 2);
+    p = p.slice(0, head) + '…' + p.slice(p.length - tail);
+  }
+  return p;
+}
 
 export function isInside(parent, child) {
   const relative = path.relative(parent, child);

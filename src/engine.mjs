@@ -8,9 +8,10 @@ import {readFile, writeFile, restoreDisplaced, rmdirIfEmpty, equalBytes, toPosix
   pathIdentity, sameIdentity, removeIdentified, replacedWarning, recoverProbes} from './fsx.mjs';
 import {inspect, inspectBytes, fingerprintOf, render, recordLayout, identity, ABSENT} from './units.mjs';
 import {unifiedDiff} from './diff.mjs';
-import {prepareOriginals, publishOriginals, readOriginals, originalBytes, collectOrphanBlobs, originalManifestPath, putBlob, RECONSTRUCTED_WARNING} from './originals.mjs';
+import {prepareOriginals, publishOriginals, readOriginals, originalBytes, collectOrphanBlobs, originalManifestPath, putBlob} from './originals.mjs';
 import {privateDirectory} from './private-storage.mjs';
-import {releaseCarrierReferences, retireCarriers, RETENTION_LIMIT} from './retained.mjs';
+import {releaseCarrierReferences, retireCarriers} from './retained.mjs';
+import {note, blockedMessage, format, messageError} from './i18n.mjs';
 
 export const MARK = 'managed by recipe-switch';
 export const stateHome = (env = process.env) => path.resolve(env.RECIPE_SWITCH_HOME || path.join(os.homedir(), '.recipe-switch'));
@@ -22,7 +23,7 @@ function serialize(unit) {
   for (const key of ['beforeBytes', 'afterBytes']) if (key in out) out[key] = enc(out[key]);
   return out;
 }
-function deserialize(unit) {
+export function deserialize(unit) {
   const out = {...unit};
   for (const key of ['beforeBytes', 'afterBytes']) if (key in out) out[key] = dec(out[key]);
   return out;
@@ -95,9 +96,10 @@ async function cleanTemp(store, row, artifact) {
   if (!artifact.temp) return;
   await removeIdentified(artifact.temp, artifact.tempIdentity, {boundary: row.boundary, warn: message => store.warn(message)});
 }
-function rollbackBlocked(row, current, expected, journal) {
+function rollbackBlocked(row, current, expected, journal, error = '') {
   const describe = bytes => bytes === null ? 'absent' : 'sha256:' + sha256(bytes);
-  return `这个文件的回滚没能完成，因为文件系统不再支持安全写入。当前内容是 ${describe(current)}，应为 ${describe(expected)}，备份在 ${journal.backup}。请先保留当前文件，再从备份恢复应有版本，或恢复硬链接能力后重试。 / Rollback could not complete because the filesystem no longer supports safe writes. Current content is ${describe(current)}; expected ${describe(expected)}; backup: ${journal.backup}. Preserve the current file, then restore the expected version from backup, or restore hard-link support and retry. File: ${toPosix(row.path)}`;
+  return note('safety.rollbackPending', {current: describe(current), expected: describe(expected),
+    backup: journal.backup, path: toPosix(row.path), error});
 }
 async function compensate(store, journal, row) {
   await assertBoundary(row.path, row.boundary);
@@ -107,7 +109,7 @@ async function compensate(store, journal, row) {
   const current = await readFile(row.path), after = dec(row.after);
   const complete = async () => {
     const actual = await readFile(row.path);
-    if (!equalBytes(actual, before)) throw new Error(rollbackBlocked(row, actual, before, journal));
+    if (!equalBytes(actual, before)) throw messageError(rollbackBlocked(row, actual, before, journal));
     undo.phase = 'restored'; await store.journal(journal);
   };
   if (equalBytes(current, before)) return complete();
@@ -141,7 +143,7 @@ async function compensate(store, journal, row) {
   } catch (error) {
     if (equalBytes(await readFile(row.path), before)) return complete();
     undo.phase = 'compensation-pending'; await store.journal(journal);
-    throw new Error(`${rollbackBlocked(row, await readFile(row.path), before, journal)}\n${error.message}`);
+    throw messageError(rollbackBlocked(row, await readFile(row.path), before, journal, error.message), error);
   }
 }
 
@@ -150,7 +152,11 @@ export class Store {
     this.home = path.resolve(home); this.file = path.join(this.home, 'state.json');
     this.pending = path.join(this.home, 'pending.json'); this.warnings = [];
   }
-  warn(message) { if (!this.warnings.includes(message)) { this.warnings.push(message); process.emitWarning(message); } }
+  warn(message) {
+    if (!this.warnings.some(item => JSON.stringify(item) === JSON.stringify(message))) {
+      this.warnings.push(message); process.emitWarning(typeof message === 'string' ? message : format(message));
+    }
+  }
   async readState() {
     const bytes = await readFile(this.file);
     if (bytes === null) return {schema: 1, targets: {}};
@@ -295,10 +301,10 @@ export async function plan({store, harness, home, recipe, desired, notes = [], f
     }
   }
   const files = await previewFiles(units, 'after');
-  const blocked = [...await publicationBlocks(store, units), ...(!force ? [...drift.map(d => `hand edit detected: ${d.path} (${d.unit})`), ...conflicts.map(c => `${c.reason}: ${c.path}`)] : [])];
+  const blocked = [...await publicationBlocks(store, units), ...(!force ? [...drift.map(d => ({kind: 'hand-edit', path: d.path, unit: d.unit})), ...conflicts.map(c => ({kind: 'conflict', path: c.path}))] : [])];
   return {id: crypto.randomUUID(), key, harness, home: toPosix(path.resolve(home)), kind: kind ?? (target?.stack?.length ? 'switch' : 'install'),
     stateVersion: stackIds(target), recipe: recipe && {key: recipe.key, id: recipe.id, name: recipe.name, version: recipe.version, revision: recipe.revision,
-      origin: recipe.origin, optionValues: recipe.optionValues ?? {}}, units, files, drift, conflicts, notes: [...notes, RETENTION_LIMIT, RESTORE_LIMIT], blocked, force};
+      origin: recipe.origin, optionValues: recipe.optionValues ?? {}}, units, files, drift, conflicts, notes: [...notes, note('retentionLimit'), note('restoreLimit')], blocked, force};
 }
 export function describe(unit) {
   if (unit.type === 'file') return 'managed file';
@@ -314,11 +320,12 @@ async function publicationBlocks(store, units) {
     if (dirs.has(dir)) continue;
     dirs.add(dir);
     const reason = await probeHardlinks(unit.path, unit.boundary, store.home);
-    if (reason) blocked.push(reason);
+    if (reason) blocked.push({kind: 'generic', text: reason});
   }
   return blocked;
 }
-export const RESTORE_LIMIT = '若探测后硬链接能力丢失，恢复会检查目标不存在后 rename；检查与 rename 之间被外部重新创建的目标无法原子保护。If hard-link support disappears after preview, recovery checks absence then renames; a target recreated between that check and rename cannot be protected atomically.';
+/** A blocked entry or its text form, for error messages that still join the list. */
+export const blockedText = item => blockedMessage(item);
 
 // Presentation only. Integrity comparisons below always use real bytes.
 const SECRET = /((?:["']?)(?:authorization|proxy-authorization|x-api-key|api[_-]?key|set-cookie|cookie|auth|[\w.-]*(?:token|secret|password))["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'[^']*'|[^\r\n,}]+)/gi;
@@ -410,7 +417,10 @@ async function commitFiles(store, rows, state, backupDir, beforeSave, cleanupDir
     await store.save(state);
   } catch (error) {
     try { await store.recover(); }
-    catch (recovery) { throw new Error(`${error.message}\nRecovery pending: ${recovery.message}`); }
+    catch (recovery) {
+      if (recovery.note) throw messageError({...recovery.note, vars: {...recovery.note.vars, error: `${error.message}\n${recovery.note.vars.error ?? ''}`}}, recovery);
+      throw new Error(`${error.message}\nRecovery pending: ${recovery.message}`);
+    }
     throw new Error(`${error.message}\nWritten files reverted; backup kept at ${backupDir}`);
   }
   await store.recover();
@@ -449,7 +459,7 @@ async function originalCandidates(store, target, rows) {
       bytes = candidates.get(file)?.bytes ?? await readFile(file);
       for (const {unit} of [...history].reverse()) bytes = render(unit, 'before', bytes);
       source = 'reconstructed';
-      reason = `没有最早的完整文件记录或可靠操作备份 / No earliest whole-file record or reliable operation backup${reason ? ': ' + reason : ''}`;
+      reason = note('originals.reconstructedReason', {error: reason ?? ''});
     }
     candidates.set(file, {path: file, boundary, bytes, source, reconstructed: source === 'reconstructed', reason});
   }
@@ -467,10 +477,10 @@ async function endOriginalCycle(store, state, key, harness, home, rows) {
 }
 
 export async function applyPlan(store, planned) {
-  if (planned.blocked.length) throw new Error(`Plan is blocked:\n  ${planned.blocked.join('\n  ')}`);
+  if (planned.blocked.length) throw new Error(`Plan is blocked:\n  ${planned.blocked.map(blockedText).join('\n  ')}`);
   return store.transaction(async state => {
     if (JSON.stringify(stackIds(state.targets[planned.key])) !== JSON.stringify(planned.stateVersion)) throw new Error('Installation state changed since the preview; preview again.');
-    if (!planned.units.length) return {changed: false, message: 'Already up to date; nothing to write.'};
+    if (!planned.units.length) return {changed: false, code: 'unchanged', message: note('result.unchanged')};
     const units = planned.units.map(unit => ({...unit}));
     const rows = await prepare(units, 'after', 'before');
     checkPreview(rows, planned);
@@ -486,7 +496,8 @@ export async function applyPlan(store, planned) {
     const replacedVersions = await commitFiles(store, rows, state, backupDir, (created, replaced) => {
       op.createdDirs = created.map(toPosix); op.replacedVersions = replaced;
     }, knownDirs, originals);
-    return {changed: true, op: opId, backup: backupDir, replacedVersions, message: `${planned.kind === 'switch' ? 'Switched' : 'Installed'} ${planned.recipe?.key ?? ''}`};
+    return {changed: true, op: opId, backup: backupDir, replacedVersions, code: planned.kind === 'switch' ? 'switched' : 'installed',
+      message: note(planned.kind === 'switch' ? 'result.switched' : 'result.installed', {recipe: planned.recipe?.key ?? ''})};
   });
 }
 async function runtimeCleanup(target) {
@@ -516,11 +527,11 @@ export async function planUndo(store, harness, home, {all = false, force = false
   if (ops.length === target.stack.length) units.unshift(...await runtimeCleanup(target));
   return {key, harness, home: toPosix(path.resolve(home)), kind: all ? 'uninstall' : 'rollback', ops: ops.map(op => op.id),
     restores: all ? null : target.stack.at(-2)?.recipe ?? null, files: await previewFiles(units, 'before'), drift,
-    notes: [RETENTION_LIMIT, RESTORE_LIMIT],
-    blocked: [...await publicationBlocks(store, units), ...(!force ? drift.map(d => `hand edit detected: ${d.path} (${d.unit})`) : [])], force};
+    notes: [note('retentionLimit'), note('restoreLimit')],
+    blocked: [...await publicationBlocks(store, units), ...(!force ? drift.map(d => ({kind: 'hand-edit', path: d.path, unit: d.unit})) : [])], force};
 }
 export async function applyUndo(store, planned) {
-  if (planned.blocked.length) throw new Error(`Blocked:\n  ${planned.blocked.join('\n  ')}`);
+  if (planned.blocked.length) throw new Error(`Blocked:\n  ${planned.blocked.map(blockedText).join('\n  ')}`);
   return store.transaction(async state => {
     const target = state.targets[planned.key];
     const ops = planned.kind === 'uninstall' ? [...(target?.stack ?? [])].reverse() : target?.stack?.length ? [target.stack.at(-1)] : [];
@@ -534,8 +545,9 @@ export async function applyUndo(store, planned) {
     const retirement = !target.stack.length ? await endOriginalCycle(store, state, planned.key, planned.harness, planned.home, rows) : null;
     if (!target.stack.length) delete state.targets[planned.key];
     const replacedVersions = await commitFiles(store, rows, state, backupDir, undefined, ops.flatMap(op => op.createdDirs ?? []), retirement);
-    return {changed: true, backup: backupDir, replacedVersions, message: planned.kind === 'uninstall' ? 'Uninstalled; original state restored.'
-      : planned.restores ? `Rolled back to ${planned.restores.key}` : 'Rolled back; original state restored.'};
+    return {changed: true, backup: backupDir, replacedVersions, code: planned.kind === 'uninstall' ? 'uninstalled' : 'rolledBack',
+      message: planned.kind === 'uninstall' ? note('result.uninstalled')
+        : planned.restores ? note('result.rolledBackTo', {recipe: planned.restores.key}) : note('result.rolledBack')};
   });
 }
 export async function planRestoreOriginal(store, harness, home, {force = false} = {}) {
@@ -553,8 +565,8 @@ export async function planRestoreOriginal(store, harness, home, {force = false} 
         }
         return {id: crypto.randomUUID(), key, harness, home: toPosix(path.resolve(home)), kind: 'restore-original',
           noChange: same, ended: true, stateVersion: [], files: [], units: [], drift: [], force,
-          notes: [same ? '已经是装之前的状态 / Already at the pre-install state' : '安装周期已结束，备份已退役；新修改将作为下次安装的起点 / Installation cycle ended; retired backup cannot replace later changes.'],
-          blocked: same ? [] : ['安装周期已结束，不能恢复已退役的快照 / Installation cycle ended; snapshot retired.']};
+          notes: [note(same ? 'originals.alreadyOriginal' : 'originals.endedChanges')],
+          blocked: same ? [] : [{kind: 'generic', text: note('originals.cycleEnded')}]};
       }
       throw new Error('No original snapshot for this target.');
     }
@@ -582,15 +594,15 @@ export async function planRestoreOriginal(store, harness, home, {force = false} 
       stateVersion: stackIds(target), manifestVersion: sha256(await readFile(original.manifest)),
       files: changedFiles, noChange, drift, force,
       reconstructed: original.files.some(file => file.reconstructed), capturedAt: original.capturedAt,
-      notes: [...(original.files.some(file => file.reconstructed) ? [RECONSTRUCTED_WARNING] : []),
-        'Restores complete pre-install backup files and removes every recipe-switch operation for this target. Unrelated changes in these files also require force and are backed up first.', RETENTION_LIMIT, RESTORE_LIMIT],
+      notes: [...(original.files.some(file => file.reconstructed) ? [note('originals.reconstructed')] : []),
+        note('restoreOriginalBody'), note('retentionLimit'), note('restoreLimit')],
       blocked: [...await publicationBlocks(store, units), ...(!force && original.files.some(file => file.reconstructed)
-        ? [`${RECONSTRUCTED_WARNING}。请额外确认 --force / Confirm explicitly with --force.`] : []),
-        ...(!force ? drift.map(row => `hand edit detected: ${row.path} (${row.unit})`) : [])]};
+        ? [{kind: 'generic', text: note('originals.requiresConfirmation')}] : []),
+        ...(!force ? drift.map(row => ({kind: 'hand-edit', path: row.path, unit: row.unit})) : [])]};
   });
 }
 export async function applyRestoreOriginal(store, planned) {
-  if (planned.blocked.length) throw new Error(`Blocked:\n  ${planned.blocked.join('\n  ')}`);
+  if (planned.blocked.length) throw new Error(`Blocked:\n  ${planned.blocked.map(blockedText).join('\n  ')}`);
   return store.transaction(async state => {
     const target = state.targets[planned.key], original = await readOriginals(store, planned.harness, planned.home);
     if (planned.noChange && !target?.stack?.length && !original) {
@@ -599,7 +611,7 @@ export async function applyRestoreOriginal(store, planned) {
         const bytes = await readFile(entry.path);
         if ((bytes === null ? null : sha256(bytes)) !== entry.fingerprint) throw new Error('Files changed since the preview; preview again.');
       }
-      return {changed: false, message: '已经是装之前的状态 / Already at the pre-install state'};
+      return {changed: false, code: 'unchanged', message: note('originals.alreadyOriginal')};
     }
     if (JSON.stringify(stackIds(target)) !== JSON.stringify(planned.stateVersion) || !original || sha256(await readFile(original.manifest)) !== planned.manifestVersion)
       throw new Error('Installation state changed since the preview; preview again.');
@@ -610,14 +622,14 @@ export async function applyRestoreOriginal(store, planned) {
     if (!target?.stack?.length && rows.every(row => equalBytes(row.before, row.after))) {
       const retirement = await endOriginalCycle(store, state, planned.key, planned.harness, planned.home, rows);
       await store.save(state); await publishOriginals(store, retirement); await collectOrphanBlobs(store);
-      return {changed: false, message: '已经是装之前的状态 / Already at the pre-install state'};
+      return {changed: false, code: 'unchanged', message: note('originals.alreadyOriginal')};
     }
     const backupDir = await backup(store, `${new Date().toISOString().replace(/[:.]/g, '-')}-${crypto.randomUUID()}`, rows);
     const dirs = (target?.stack ?? []).flatMap(op => op.createdDirs ?? []);
     const retirement = await endOriginalCycle(store, state, planned.key, planned.harness, planned.home, rows);
     delete state.targets[planned.key];
     const replacedVersions = await commitFiles(store, rows, state, backupDir, undefined, dirs, retirement);
-    return {changed: true, backup: backupDir, replacedVersions, message: 'Restored pre-install backup; recipe-switch is fully uninstalled from this target.'};
+    return {changed: true, backup: backupDir, replacedVersions, code: 'restoredOriginal', message: note('result.restoredOriginal')};
   });
 }
 

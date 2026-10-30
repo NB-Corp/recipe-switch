@@ -68,7 +68,7 @@ steering = { text = "Keep the review goal in view." }
 
 export function sandboxEnv(dir) {
   return {
-    RECIPE_SWITCH_HOME: path.join(dir, 'state'), CODEX_HOME: path.join(dir, 'codex'), KIKI_HOME: path.join(dir, 'kiki'),
+    RECIPE_SWITCH_HOME: path.join(dir, 'state'), RECIPE_SWITCH_USER_HOME: dir, CODEX_HOME: path.join(dir, 'codex'), KIKI_HOME: path.join(dir, 'kiki'),
     PI_CODING_AGENT_DIR: path.join(dir, 'pi/agent'), DSH_HOME: path.join(dir, 'dsh'), CLAUDE_CONFIG_DIR: path.join(dir, 'claude'),
     OMP_CODING_AGENT_DIR: path.join(dir, 'omp/agent'), GROK_HOME: path.join(dir, 'grok'), OPENCODE_CONFIG_DIR: path.join(dir, 'opencode'),
     KIMI_CODE_HOME: path.join(dir, 'kimi-code'), HERMES_HOME: path.join(dir, 'hermes'), OPENCLAW_STATE_DIR: path.join(dir, 'openclaw'),

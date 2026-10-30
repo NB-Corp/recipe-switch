@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
-import {sandbox, exists} from './helpers.mjs';
+import {sandbox, exists, joinText} from './helpers.mjs';
 import {Store, plan, applyPlan, planUndo, applyUndo} from '../src/engine.mjs';
 import {restoreDisplaced} from '../src/fsx.mjs';
 import {fileUnit} from '../src/drivers/common.mjs';
@@ -27,14 +27,15 @@ test('R23: preview blocks unsafe filesystems in CLI/UI, even under force; target
   fs.copyFile = async () => { copied = true; throw Error('must never copy'); };
   try {
     const planned = await preview(b, 'NEXT', {force: true});
-    assert.match(planned.blocked.join('\n'), /该位置的文件系统不支持硬链接（常见于 FAT\/exFAT\/部分网络盘），recipe-switch 无法保证安全写入/);
-    assert.match(planned.blocked.join('\n'), /filesystem does not support hard links/);
+    assert.equal(planned.blocked[0].text.id, 'safety.hardlinksUnsupported');
+    assert.match((await import('../src/i18n.mjs')).format(planned.blocked[0].text, 'zh'), /该位置的文件系统不支持硬链接（常见于 FAT\/exFAT\/部分网络盘），recipe-switch 无法保证安全写入/);
+    assert.match(joinText(planned.blocked), /filesystem does not support hard links/);
     await assert.rejects(applyPlan(b.store, planned), /blocked/);
     assert.equal(await fs.readFile(b.target, 'utf8'), 'ORIGINAL\r\n');
     assert.deepEqual(await fs.readdir(path.dirname(b.target)), ['main']);
     const {main} = await import('../bin/recipe-switch.mjs'), log = [], original = console.log;
     console.log = (...xs) => log.push(xs.join(' '));
-    try { await main(['install', 'fixture', 'r@1'], {preview: async () => planned}); } finally { console.log = original; }
+    try { await main(['install', 'fixture', 'r@1', '--lang', 'zh'], {preview: async () => planned}); } finally { console.log = original; }
     assert.match(log.join('\n'), /不支持硬链接/);
     const app = await fs.readFile(new URL('../ui/app.js', import.meta.url), 'utf8');
     assert.match(app, /planned\.blocked/); // UI consumes the same bilingual blocked payload.
@@ -154,12 +155,12 @@ if sys.argv[2]=='request': ctx.inject(request={'messages':[]},session_id='real')
   let report = JSON.parse(await fs.readFile(reportFile));
   assert.equal(report.hermes_version, 'fixture-1.2.3'); assert.equal(report.middleware_registered, true);
   assert.equal(report.llm_request_seen, false); assert.ok(Date.parse(report.registered_at));
-  assert.match((await b.service.preview({harness: 'hermes', recipe: r.key})).notes.join('\n'), /已注册，尚未见到请求/);
+  assert.match(joinText((await b.service.preview({harness: 'hermes', recipe: r.key})).notes), /Registered; no request seen yet/);
   assert.equal(run('request').status, 0);
   row = await state(); assert.equal(row.capability.state, 'confirmed'); assert.equal(row.capability.main, true);
   assert.equal(row.managed.drift.length, 0);
   report = JSON.parse(await fs.readFile(reportFile)); assert.equal(report.llm_request_seen, true); assert.ok(Date.parse(report.llm_request_seen_at));
-  assert.match((await b.service.preview({harness: 'hermes', recipe: r.key})).notes.join('\n'), /已确认生效/);
+  assert.match(joinText((await b.service.preview({harness: 'hermes', recipe: r.key})).notes), /Confirmed active/);
   const removal = await b.service.previewUndo({harness: 'hermes', all: true}); await b.service.applyUndo(removal.id);
   assert.equal(await exists(reportFile), false); assert.equal(await exists(path.dirname(entry)), false);
 });
