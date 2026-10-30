@@ -117,11 +117,15 @@ export class Service {
     const selection = recipeOptions || sameRecipe ? {...kept, ...recipeOptions} : undefined;
     const recipe = await this.recipe(recipeKey, selection);
     const merged = {...saved, ...options};
+    if (['codex', 'claude', 'omp', 'grok', 'opencode'].includes(driver.id) && recipe.texts.main === null)
+      throw new Error(`${driver.name}: explicit main=off is unsupported by this entry point; choose a recipe with Main enabled.`);
     const {units, notes = [], launch} = await driver.desired(recipe, target, merged, {env: this.env});
     const planned = await plan({store: this.store, harness: driver.id, home: target, recipe, desired: units, notes, force});
-    const blocking = (found.foreign ?? []).filter(item => item.blocking && !managed.installed);
+    const blocking = (found.foreign ?? []).filter(item => item.blocking && !managed.installed &&
+      !(driver.id === 'kimi-code' && recipe.texts.main === null && item.what === 'Non-managed SYSTEM.md'));
     if (blocking.length && !force) planned.blocked.push(...blocking.map(item => `${item.what}: ${item.detail}`));
-    planned.warnings = (found.foreign ?? []).filter(item => !item.blocking).map(item => `${item.what}: ${item.detail}`);
+    planned.warnings = [...(found.foreign ?? []).filter(item => !item.blocking).map(item => `${item.what}: ${item.detail}`),
+      ...(recipe.unknownOptions ?? []).map(id => `Unknown recipe option ${id}; ignored.`)];
     planned.options = merged;
     planned.launch = launch;
     planned.current = managed.recipe ?? null;
@@ -135,7 +139,6 @@ export class Service {
     if (['rollback', 'uninstall'].includes(planned.kind)) return this.applyUndo(planId);
     this.plans.delete(planId);
     const result = await applyPlan(this.store, planned);
-    if (result.changed) await this.store.update(state => { state.targets[planned.key].stack.at(-1).options = planned.options; });
     return {...result, launch: planned.launch, notes: planned.notes};
   }
 

@@ -6,15 +6,25 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {exists, listFiles, toPosix} from './fsx.mjs';
+import {exists, listFiles, toPosix, assertBoundary, readFile} from './fsx.mjs';
 import {readRecipeToml, optionValues, evaluate, sixTexts, revisionOf} from './recipe-toml.mjs';
 
 export const TEXT_KEYS = ['main', 'sub', 'independent', 'userSteer', 'subSteer', 'agentSteer'];
 const GWT_TARGETS = ['codex', 'kiki', 'claude', 'pi', 'omp', 'dsh'];
+function requireAdapterRoles(target, texts) {
+  for (const role of ['main', 'independent']) if (texts[role] === null)
+    throw new Error(`${target}: explicit ${role}=off is unsupported by this adapter; choose a recipe with that role enabled.`);
+}
 
 async function readDist(root, target) {
   const dir = path.join(root, 'dist', target), out = new Map();
-  for (const rel of await listFiles(dir)) out.set(rel, await fs.readFile(path.join(dir, rel)));
+  await assertBoundary(dir, root);
+  for (const rel of await listFiles(dir)) {
+    const file = path.join(dir, rel);
+    await assertBoundary(file, root);
+    out.set(rel, await readFile(file));
+    await assertBoundary(file, root);
+  }
   return out;
 }
 
@@ -39,6 +49,7 @@ async function loadPackage(file, {gwtRoot, authorRoot} = {}) {
       options: parsed.options, optionValues: values, unknownOptions: unknown,
       kikiPackage: {entry: 'recipe.toml', files: new Map([['recipe.toml', Buffer.from(toml)], ...files])},
       async artifacts(target) {
+        requireAdapterRoles(target, texts);
         if (authorRoot && isDefault && GWT_TARGETS.includes(target) && await exists(path.join(authorRoot, 'dist', target))) return readDist(authorRoot, target);
         return renderWithAdapters(adapters, target, info, texts);
       },
@@ -50,6 +61,9 @@ async function loadPackage(file, {gwtRoot, authorRoot} = {}) {
 
 /** Legacy gpt-with-taste layout: recipe/manifest.json + six Markdown files. */
 async function loadLegacyAuthorRepo(root) {
+  await assertBoundary(path.join(root, 'recipe'), root);
+  const packageFiles = (await listFiles(path.join(root, 'recipe'))).map(file => `recipe/${file}`);
+  for (const rel of ['src/build.mjs', ...packageFiles]) await assertBoundary(path.join(root, rel), root);
   const {loadRecipe} = await import(pathToFileURL(path.join(root, 'src/build.mjs')).href);
   const {meta, texts} = await loadRecipe(root, ['codex']);
   const {sha256} = await import('./fsx.mjs');
@@ -72,7 +86,10 @@ async function loadLegacyAuthorRepo(root) {
 export async function renderWithAdapters(gwtRoot, target, info, texts) {
   if (!gwtRoot) throw new Error('A gpt-with-taste checkout is required to render adapters (sources --gwt)');
   if (!GWT_TARGETS.includes(target)) throw new Error(`Unknown adapter target: ${target}`);
-  const {render} = await import(pathToFileURL(path.join(gwtRoot, 'adapters', target, 'build.mjs')).href);
+  requireAdapterRoles(target, texts);
+  const entry = path.join(gwtRoot, 'adapters', target, 'build.mjs');
+  await assertBoundary(entry, gwtRoot);
+  const {render} = await import(pathToFileURL(entry).href);
   const files = Object.fromEntries(TEXT_KEYS.map(key => [key, `${key.replace(/[A-Z]/g, c => '-' + c.toLowerCase())}.md`]));
   const meta = {schemaVersion: 1, ...info, texts: files, compatibility: {kiki: {version: info.version, packages: []}}};
   const filled = Object.fromEntries(TEXT_KEYS.map(key => [key, texts[key] ?? '']));
@@ -86,8 +103,10 @@ const isRecipeFile = name => name.endsWith('.toml') && name !== 'mapping.toml';
 export async function loadSource(locator, {gwtRoot} = {}) {
   const target = path.resolve(locator);
   const stat = await fs.stat(target);
-  if (stat.isDirectory() && await exists(path.join(target, 'recipe/recipe.toml')))
+  if (stat.isDirectory() && await exists(path.join(target, 'recipe/recipe.toml'))) {
+    await assertBoundary(path.join(target, 'recipe/recipe.toml'), target);
     return [await loadPackage(path.join(target, 'recipe/recipe.toml'), {authorRoot: target})];
+  }
   if (stat.isDirectory() && await exists(path.join(target, 'recipe/manifest.json'))) return [await loadLegacyAuthorRepo(target)];
   if (stat.isFile() && target.endsWith('.toml')) return [await loadPackage(target, {gwtRoot})];
   if (stat.isDirectory()) {

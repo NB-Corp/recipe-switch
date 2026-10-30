@@ -17,7 +17,7 @@ export function loadSnapshot(url = SNAPSHOT) {
   const mtime = statSync(url).mtimeMs;
   if (cache.url === url.href && cache.mtime === mtime) return cache.value;
   const value = JSON.parse(readFileSync(url, 'utf8'));
-  for (const key of KEYS) if (typeof value.texts?.[key] !== 'string') throw new Error(`recipe.json is missing texts.${key}`);
+  for (const key of KEYS) if (value.texts?.[key] !== null && typeof value.texts?.[key] !== 'string') throw new Error(`recipe.json is missing texts.${key}`);
   cache = {url: url.href, mtime, value};
   return value;
 }
@@ -43,10 +43,10 @@ export function createRecipeExtension({role = 'main', completedResultTypes = [],
     if (registrations.has(pi)) throw new Error('Load only one recipe-switch entry per Pi session');
     registrations.add(pi);
     loadSnapshot(snapshot); // fail at startup when the snapshot is unreadable
-    const texts = () => Object.fromEntries(KEYS.map(key => [key, loadSnapshot(snapshot).texts[key].trim()]));
+    const texts = () => Object.fromEntries(KEYS.map(key => [key, loadSnapshot(snapshot).texts[key]?.trim() ?? '']));
     const decision = ctx => {
       const state = overrides(ctx), snap = loadSnapshot(snapshot);
-      const active = state.enabled !== false && inScope(snap.scope, ctx.model);
+      const active = snap.texts[role] !== null && state.enabled !== false && inScope(snap.scope, ctx.model);
       return {role, active, steering: state.steering !== false, completedResultTypes: completed};
     };
     let warned = false;

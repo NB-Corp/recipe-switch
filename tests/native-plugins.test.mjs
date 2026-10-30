@@ -22,7 +22,7 @@ for (const id of ['kimi-code', 'hermes', 'openclaw']) test(`${id}: install → s
   const {service, dir, file, read} = await fixture(t);
   if (id === 'kimi-code') await put(file(`${id}/plugins/installed.json`), '\uFEFF{\r\n "version" : 1,\r\n "plugins" : [ { "id" : "neighbour", "enabled" : true, "root": "example" } ]\r\n}\r\n');
   if (id === 'hermes') await put(file(`${id}/config.yaml`), '\uFEFF# personal config\r\nmodel: example\r\nplugins:\r\n  other: yes # keep\r\n  enabled: # comment\r\n    - neighbour # keep\r\nterminal:\r\n  cwd: /example\r\n');
-  if (id === 'openclaw') await put(file(`${id}/openclaw.json`), '\uFEFF{\r\n "model": "example", "plugins": { "allow": ["neighbour"], "entries": { "neighbour": {"enabled":true}, "recipe-switch": {"enabled":false, "hooks": { "allowConversationAccess":false, "other":true }} }}\r\n}\r\n');
+  if (id === 'openclaw') await put(file(`${id}/openclaw.json`), '\uFEFF{\r\n "model": "example", "plugins": { "allow": ["neighbour"], "entries": { "neighbour": {"enabled":true}, "recipe-switch": {"enabled":false, "hooks": { "allowConversationAccess":true, "other":true }} }}\r\n}\r\n');
   await put(file(`${id}/SOUL.md`), '# User identity\n');
   await put(file(`${id}/AGENTS.md`), '# User instructions\n');
   const before = await tree(dir);
@@ -154,7 +154,7 @@ test('home resolution follows each source without reading the resolved homes', (
 });
 
 async function unitFixture(t, relative, text, desired) {
-  const box = await fixture(t), file = box.file(relative);
+  const box = await fixture(t), file = box.file(`target/${relative}`);
   if (text !== null) await put(file, text);
   const store = new Store(box.file('unit-state'));
   const planned = await plan({store, harness: 'fixture', home: box.file('target'), recipe: recipes.a, desired: desired(file)});
@@ -203,9 +203,10 @@ test('jsonKey: missing file/deep ancestors undo exactly; unrelated values surviv
   }
   const box = await unitFixture(t, 'json-keep/config.json', null,
     file => [{type: 'jsonKey', path: file, pointer: ['plugins', 'entries', 'recipe-switch', 'enabled'], afterValue: true}]);
-  const config = JSON.parse(await fs.readFile(box.file, 'utf8'));
-  config.plugins.entries.neighbour = {enabled: true};
-  await fs.writeFile(box.file, JSON.stringify(config));
+  const {setKey} = await import('../src/json-edit.mjs');
+  // Edit only the neighbour; reserializing the entire document also edits the
+  // managed member's source span and correctly counts as drift.
+  await fs.writeFile(box.file, setKey(await fs.readFile(box.file, 'utf8'), ['plugins', 'entries', 'neighbour'], {enabled: true}));
   await box.remove();
   assert.deepEqual(JSON.parse(await fs.readFile(box.file, 'utf8')), {plugins: {entries: {neighbour: {enabled: true}}}});
 });
@@ -228,7 +229,7 @@ test('Hermes: explicit disabled entry wins; safe empty disable list is left byte
 
 test('OpenClaw: existing empty-object layout and whitespace restore exactly after adding new keys', async t => {
   const {service, file} = await fixture(t);
-  for (const text of ['{  }\r\n', '{"plugins":{"entries":{"recipe-switch":{"hooks":{ \n    }}}}}\n', '{"plugins":{"allow":[  \n ], "entries":{"recipe-switch":{"enabled":false,"hooks":{"allowConversationAccess":false}}}}}\n']) {
+  for (const text of ['{  }\r\n', '{"plugins":{"entries":{"recipe-switch":{"hooks":{ \n    }}}}}\n', '{"plugins":{"allow":[  \n ], "entries":{"recipe-switch":{"enabled":false,"hooks":{"allowConversationAccess":true}}}}}\n']) {
     await put(file('openclaw/openclaw.json'), text);
     await install(service, 'openclaw', 'a');
     await install(service, 'openclaw', 'b');

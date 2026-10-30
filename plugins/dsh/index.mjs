@@ -16,7 +16,7 @@ export function snapshotReader(url = new URL('./recipe.json', import.meta.url)) 
     const {mtimeMs} = await stat(url);
     if (mtimeMs !== cache.mtime) {
       const value = JSON.parse(await readFile(url, 'utf8'));
-      for (const key of KEYS) if (typeof value.texts?.[key] !== 'string') throw new Error(`recipe.json is missing texts.${key}`);
+      for (const key of KEYS) if (value.texts?.[key] !== null && typeof value.texts?.[key] !== 'string') throw new Error(`recipe.json is missing texts.${key}`);
       cache = {mtime: mtimeMs, value};
     }
     return cache.value;
@@ -36,7 +36,7 @@ export async function apply(ctx, config = {}) {
   ctx.systemPrompt.section({
     name: sectionName,
     order: 10,
-    text: ({agent}) => agent === undefined ? '' : texts()[roleOf(agent)],
+    text: ({agent}) => agent === undefined ? '' : texts()[roleOf(agent)] ?? '',
   });
 
   ctx.on('agent/pre-step', async ({agent}, next) => {

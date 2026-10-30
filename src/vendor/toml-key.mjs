@@ -8,16 +8,25 @@ function isEscaped(value, index) {
   for (let cursor = index - 1; cursor >= 0 && value[cursor] === '\\'; cursor -= 1) slashes += 1;
   return slashes % 2 === 1;
 }
+function multilineCloseAt(value, delimiter, start = 0) {
+  for (let index = start; index <= value.length - delimiter.length; index += 1) {
+    if (value.slice(index, index + delimiter.length) !== delimiter) continue;
+    // Literal multiline strings do not recognize escapes. Basic multiline
+    // strings skip delimiters preceded by an odd run of backslashes.
+    if (delimiter === "'''" || !isEscaped(value, index)) return index;
+  }
+  return -1;
+}
 function lexLine(raw, activeMultiline) {
   if (activeMultiline) {
-    const closeAt = raw.indexOf(activeMultiline);
+    const closeAt = multilineCloseAt(raw, activeMultiline);
     return {code: '', depthDelta: 0, multiline: closeAt >= 0 ? null : activeMultiline, wasMultiline: true};
   }
   let quote = null, code = '', depthDelta = 0;
   for (let index = 0; index < raw.length; index += 1) {
     const char = raw[index], triple = raw.slice(index, index + 3);
     if (!quote && (triple === '"""' || triple === "'''")) {
-      const closeAt = raw.indexOf(triple, index + 3);
+      const closeAt = multilineCloseAt(raw, triple, index + 3);
       if (closeAt < 0) return {code, depthDelta, multiline: triple, wasMultiline: false};
       code += raw.slice(index, closeAt + 3);
       index = closeAt + 2;

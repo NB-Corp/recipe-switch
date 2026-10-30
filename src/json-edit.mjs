@@ -105,8 +105,31 @@ export function setKey(text, pointer, value) {
 }
 
 export function getKey(text, pointer) {
+  const raw = rawAt(text, pointer);
+  return raw === undefined ? undefined : JSON.parse(raw);
+}
+
+export function rawAt(text, pointer) {
   const node = find(parseTree(text), pointer);
-  return node === undefined ? undefined : JSON.parse(text.slice(node.start, node.end));
+  return node === undefined ? undefined : text.slice(node.start, node.end);
+}
+
+export function rawMember(text, pointer) {
+  const parent = find(parseTree(text), pointer.slice(0, -1));
+  const member = parent?.members?.find(member => member.key === pointer.at(-1));
+  return member ? text.slice(member.keyStart, member.node.end) : undefined;
+}
+
+export function rawItem(text, pointer, value) {
+  const array = find(parseTree(text), pointer);
+  const item = array?.items?.find(item => item.type === 'string' && item.value === value);
+  return item ? text.slice(item.start, item.end) : undefined;
+}
+
+export function replaceRawAt(text, pointer, raw) {
+  const node = find(parseTree(text), pointer);
+  if (!node) fail(`JSON value ${pointer.join('.')} not found`);
+  return text.slice(0, node.start) + raw + text.slice(node.end);
 }
 
 /** Add or remove one string item of the array at pointer. */
@@ -121,7 +144,7 @@ export function setArrayItem(text, pointer, item, present) {
   if (present) {
     if (index >= 0) return text;
     const rendered = JSON.stringify(item);
-    if (!array.items.length) return text.slice(0, array.start + 1) + rendered + text.slice(array.end - 1);
+    if (!array.items.length) return text.slice(0, array.start + 1) + rendered + text.slice(array.start + 1);
     const last = array.items.at(-1);
     const multiline = text.slice(array.start, last.start).includes('\n');
     const spaced = array.items.length < 2 || /,s/.test(text.slice(array.items[0].end, array.items[1].start));
@@ -129,7 +152,7 @@ export function setArrayItem(text, pointer, item, present) {
   }
   if (index < 0) return text;
   const node = array.items[index];
-  if (array.items.length === 1) return text.slice(0, array.start + 1) + text.slice(array.end - 1);
+  if (array.items.length === 1) return text.slice(0, node.start) + text.slice(node.end);
   if (index === array.items.length - 1) return text.slice(0, array.items[index - 1].end) + text.slice(node.end);
   return text.slice(0, node.start) + text.slice(array.items[index + 1].start);
 }

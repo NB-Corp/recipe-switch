@@ -51,7 +51,7 @@ export const kimiCode = {
   async desired(recipe, home) {
     const dir = path.join(home, 'plugins', 'managed', ID), {file, entry} = await kimiRegistry(home);
     const units = await filesFor('kimi-code', dir, ['kimi.plugin.json', 'steer.mjs'], recipe);
-    units.push(fileUnit(path.join(home, 'SYSTEM.md'), '${base_prompt}\n\n' + `<!-- ${MARK} -->\n` + (recipe.texts.main || '') + '\n'));
+    if (recipe.texts.main !== null) units.push(fileUnit(path.join(home, 'SYSTEM.md'), '${base_prompt}\n\n' + `<!-- ${MARK} -->\n` + (recipe.texts.main || '') + '\n'));
     units.push(keyUnit(file, ['version'], 1));
     units.push({type: 'jsonArrayRecord', path: file, pointer: ['plugins'], value: ID,
       afterValue: {id: ID, root: toPosix(dir), source: 'local-path', enabled: true,
@@ -100,6 +100,7 @@ async function openclawSettings(home, env) {
   if (config?.plugins?.enabled === false) throw new Error('OpenClaw plugins.enabled is false; enable plugins yourself before installing.');
   if (config?.plugins?.deny?.includes(ID)) throw new Error('OpenClaw plugins.deny includes recipe-switch; remove that deny entry yourself before installing.');
   if (config?.plugins?.entries?.[ID]?.hooks?.allowPromptInjection === false) throw new Error('OpenClaw recipe-switch hooks.allowPromptInjection is false; change that policy yourself before installing.');
+  if (config?.plugins?.entries?.[ID]?.hooks?.allowConversationAccess === false) throw new Error('OpenClaw recipe-switch hooks.allowConversationAccess is false; enable that hook yourself before installing.');
   return {file, config};
 }
 export const openclaw = {
@@ -118,7 +119,10 @@ export const openclaw = {
     units.push(keyUnit(file, ['plugins', 'entries', ID, 'enabled'], true));
     units.push(keyUnit(file, ['plugins', 'entries', ID, 'hooks', 'allowConversationAccess'], true));
     if (config?.plugins?.allow !== undefined) units.push({...jsonItemUnit(file, ['plugins', 'allow'], ID), preserveLayout: true});
-    return {units, notes: ['Restart the OpenClaw Gateway after installing or changing plugin code. Later recipe switches are re-read on the next before_prompt_build.',
+    if (env.OPENCLAW_CONFIG_PATH?.trim()) for (const unit of units) if (unit.path === file) unit.boundary = path.dirname(file);
+    return {units, notes: [...(config?.plugins?.entries?.[ID]?.hooks?.allowConversationAccess === undefined
+      ? ['Enables this plugin’s allowConversationAccess hook because it is not set. An explicit false is a manual prerequisite and is never overridden.'] : []),
+      'Restart the OpenClaw Gateway after installing or changing plugin code. Later recipe switches are re-read on the next before_prompt_build.',
       'Main + User Steer apply to regular sessions. Sub + Sub Steer apply when ctx.sessionKey is subagent:<id> or agent:<agent>:subagent:<id>; absent session keys use Main.',
       `Config: ${toPosix(file)}. Only plugin enablement, conversation-hook access and an existing allowlist are edited; AGENTS.md/SOUL.md stay unchanged.`]};
   },

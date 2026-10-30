@@ -3,10 +3,15 @@ import json
 from pathlib import Path
 from threading import Lock
 
+_ROOT = Path(__file__).resolve().parent
 _SNAPSHOT = Path(__file__).with_name("recipe.json")
 
 
 def _texts():
+    # Only this installed module's adjacent snapshot is authorized. Never follow
+    # a replaced snapshot link into another home or an environment-selected path.
+    if _SNAPSHOT.is_symlink() or _SNAPSHOT.resolve().parent != _ROOT:
+        raise ValueError("recipe-switch snapshot escapes the installed plugin directory")
     snapshot = json.loads(_SNAPSHOT.read_text(encoding="utf-8"))
     if snapshot.get("managedBy") != "recipe-switch":
         raise ValueError("Not a recipe-switch snapshot")

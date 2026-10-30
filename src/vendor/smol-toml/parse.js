@@ -108,6 +108,8 @@ export function parse(toml, options = {}) {
         d: options.maxDepth ?? 1000,
         bi: options.integersAsBigInt ?? false,
         ld: options.useLegacyDate ?? true,
+        onKey: options.onKey,
+        keyPath: [],
         uk: options.unsafeKeyBehaviour === 'throw' ? 2 : options.unsafeKeyBehaviour === 'drop' ? 1 : 0,
     };
     let res = Object.create(null);
@@ -115,6 +117,7 @@ export function parse(toml, options = {}) {
     let tmp;
     let skipping = false;
     let tbl = res;
+    let tablePath = []; // recipe-switch: expose source declaration order without JS key reordering.
     let m = meta;
     // BOM is allowed, skip.
     // JS is UTF-16, so we have to check for the UTF-16 BOM instead of the UTF-8 BOM sequence!
@@ -127,6 +130,8 @@ export function parse(toml, options = {}) {
             tmp = ctx.p += +isTableArray;
             skipping = false;
             let k = parseKey(ctx, 0x5d /* ] */);
+            tablePath = k;
+            options.onKey?.([...k]);
             if (isTableArray) {
                 if (toml.charCodeAt(ctx.p) !== 0x5d /* ] */) {
                     TomlError.x('expected end of table array declaration', ctx);
@@ -146,10 +151,12 @@ export function parse(toml, options = {}) {
         else {
             tmp = ctx.p;
             let k = parseKey(ctx);
+            options.onKey?.([...tablePath, ...k]);
             let p = peekTable(ctx, k, tbl, m, 0 /* Type.DOTTED */);
             if (!p && !skipping)
                 validateTablePeek(ctx, p, tmp);
             skipVoid(ctx, true, true);
+            ctx.keyPath = [...tablePath, ...k];
             let v = extractValue(ctx, void 0);
             if (p && !skipping)
                 p[1][p[0]] = v;

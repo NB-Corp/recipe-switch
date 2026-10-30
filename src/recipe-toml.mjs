@@ -29,10 +29,9 @@
 //   action = "append"   # prepend|append (inside section/slot), before|after|replace|remove (section)
 //   content = { text = "Cite the source of each claim." }
 // Section patches apply, in declaration order, to the slot's assembled text.
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import {parse, stringify} from './vendor/smol-toml/index.js';
-import {sha256, toPosix} from './fsx.mjs';
+import {sha256, toPosix, assertBoundary, readFile} from './fsx.mjs';
 
 const ID = /^[a-z0-9][a-z0-9._-]*$/;
 const fail = (file, message) => { throw new Error(`${toPosix(file)}: ${message}`); };
@@ -120,13 +119,18 @@ function setAt(object, at, value) {
 
 /** Read and validate a recipe.toml. */
 export async function readRecipeToml(file) {
-  const source = await fs.readFile(file, 'utf8');
+  await assertBoundary(file, path.dirname(file));
+  const bytes = await readFile(file);
+  if (bytes === null) fail(file, 'recipe file does not exist');
+  const source = bytes.toString('utf8'), optionOrder = new Set();
   let raw;
-  try { raw = plain(parse(source)); } catch (error) { fail(file, `invalid TOML: ${error.message.split('\n')[0]}`); }
+  try { raw = plain(parse(source, {onKey: at => { if (at[0] === 'options' && at.length > 1) optionOrder.add(at[1]); }})); }
+  catch (error) { fail(file, `invalid TOML: ${error.message.split('\n')[0]}`); }
   if (!raw.id || !ID.test(raw.id)) fail(file, 'missing or invalid top-level id');
   if (raw.extends) fail(file, 'extends is not supported by Recipe Switch yet; install the materialized package');
   const options = [];
-  for (const [id, option] of Object.entries(raw.options ?? {})) {
+  for (const id of new Set([...optionOrder, ...Object.keys(raw.options ?? {})])) {
+    const option = raw.options[id];
     if (!ID.test(id)) fail(file, `invalid option id ${id}`);
     if (!option || typeof option.name !== 'string' || !option.name) fail(file, `options.${id}.name is required`);
     if (typeof option.default !== 'boolean') fail(file, `options.${id}.default must be true or false`);
@@ -187,7 +191,7 @@ export function optionValues(options, selection = {}) {
   const values = {}, unknown = [];
   for (const option of options) values[option.id] = option.default;
   for (const [id, value] of Object.entries(selection ?? {})) {
-    if (!(id in values)) { unknown.push(id); continue; }
+    if (!Object.hasOwn(values, id)) { unknown.push(id); continue; }
     values[id] = Boolean(value);
   }
   return {values, unknown};
@@ -216,7 +220,13 @@ export async function evaluate(recipe, values) {
   const files = new Map(), read = async rel => {
     const target = path.resolve(recipe.dir, rel);
     if (!target.startsWith(path.resolve(recipe.dir) + path.sep)) fail(recipe.file, `file escapes package: ${rel}`);
-    if (!files.has(rel)) files.set(rel, await fs.readFile(target));
+    try { await assertBoundary(target, recipe.dir); } catch { fail(recipe.file, `file escapes package: ${rel}`); }
+    if (!files.has(rel)) {
+      const bytes = await readFile(target);
+      if (bytes === null) fail(recipe.file, `missing package file: ${rel}`);
+      await assertBoundary(target, recipe.dir);
+      files.set(rel, bytes);
+    }
     return files.get(rel).toString('utf8');
   };
   const texts = new Map();
@@ -258,17 +268,19 @@ export function sixTexts(manifest, slotTexts) {
   const pick = (position, slot) => {
     const kind = branch(position);
     if (kind === 'off') return null;
-    return kind === 'own' ? get(`prompts.${position}.${slot}`) ?? null : get(`prompts.${slot}`) ?? null;
+    return kind === 'own' ? get(`prompts.${position}.${slot}`) : get(`prompts.${slot}`);
   };
   const common = get('prompts.system') ?? null;
-  const main = pick('main', 'system') ?? common;
-  if (main === null) throw new Error('recipe has no main or common system text');
+  const chosenMain = pick('main', 'system');
+  const main = chosenMain === undefined ? common : chosenMain;
+  if (chosenMain === undefined && get('prompts.system') === undefined) throw new Error('recipe has no main or common system text');
   const userSteer = pick('main', 'steering');
   const agentSteer = branch('main') === 'own'
     ? get('prompts.main.steering_sources.agent.custom.steering') ?? (prompts.main?.steering_sources?.agent?.mode === 'off' ? null : userSteer)
     : get('prompts.steering_sources.agent.custom.steering') ?? userSteer;
-  return {main, sub: common ?? main, independent: pick('independent', 'system') ?? common ?? main,
-    userSteer, subSteer: get('prompts.steering') ?? null, agentSteer};
+  const chosenIndependent = pick('independent', 'system'), inherited = get('prompts.system') === undefined ? main : common;
+  return {main, sub: inherited, independent: chosenIndependent === undefined ? inherited : chosenIndependent,
+    userSteer: userSteer ?? null, subSteer: get('prompts.steering') ?? null, agentSteer: branch('main') === 'off' ? null : agentSteer ?? null};
 }
 
 /** Stable digest of a materialized package and its option values. */

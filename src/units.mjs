@@ -8,33 +8,28 @@
 // A unit is compared through a fingerprint so drift (a hand edit) is detected
 // before anything is written or restored.
 import path from 'node:path';
-import {readFile, writeFile, sha256, decode, equalBytes} from './fsx.mjs';
+import {readFile, writeFile, sha256, decode, equalBytes, assertBoundary} from './fsx.mjs';
 import {readKeyLine, writeKeyLine, splitKey} from './vendor/toml-key.mjs';
-import {setArrayItem, getKey, setKey} from './json-edit.mjs';
-import {getRecord, setRecord} from './json-record.mjs';
+import {setArrayItem, getKey, setKey, rawAt, rawMember, rawItem, replaceRawAt} from './json-edit.mjs';
+import {getRecord, setRecord, rawRecord} from './json-record.mjs';
 import {inspectYamlList, editYamlList} from './yaml-list.mjs';
 
 const valueUnit = unit => ['jsonKey', 'jsonArrayRecord'].includes(unit.type);
 
 export const ABSENT = 'absent';
 
-function tomlValue(line) {
-  if (line === null) return ABSENT;
-  const equals = line.indexOf('=');
-  const raw = line.slice(equals + 1).trim();
-  const quote = raw[0];
-  let end = 1;
-  while (end < raw.length && !(raw[end] === quote && (quote === "'" || raw[end - 1] !== '\\'))) end++;
-  const body = raw.slice(1, end);
-  return 'value:' + (quote === '"' ? JSON.parse(`"${body}"`) : body);
-}
+const tomlValue = line => line === null ? ABSENT : 'line:' + line;
 
 
 export const identity = unit => `${unit.type}|${path.resolve(unit.path).toLowerCase()}|${(unit.table ?? []).join('.')}|${unit.key ?? ''}|${(unit.pointer ?? []).join('.')}|${unit.value ?? ''}`;
 
 /** Current fingerprint and the full current file text (for diffs). */
 export async function inspect(unit) {
-  const bytes = await readFile(unit.path);
+  if (unit.boundary) await assertBoundary(unit.path, unit.boundary);
+  return inspectBytes(unit, await readFile(unit.path));
+}
+
+export function inspectBytes(unit, bytes) {
   if (unit.type === 'file') return {fp: bytes === null ? ABSENT : 'sha256:' + sha256(bytes), bytes};
   if (unit.type === 'tomlKey') return {fp: bytes === null ? ABSENT : tomlValue(readKeyLine(decode(bytes), unit.table, unit.key)), bytes};
   if (unit.type === 'jsonArrayItem') {
@@ -42,24 +37,27 @@ export async function inspect(unit) {
     let list;
     try { list = getKey(decode(bytes), unit.pointer); } catch { throw new Error(`Not valid JSON; refusing to edit: ${unit.path}`); }
     if (list !== undefined && !Array.isArray(list)) throw new Error(`${unit.pointer.join('.')} is not an array in ${unit.path}`);
-    return {fp: list?.includes(unit.value) ? 'present' : ABSENT, bytes};
+    return {fp: list?.includes(unit.value) ? unit.exactSource ? 'raw:' + rawItem(decode(bytes), unit.pointer, unit.value) : 'present' : ABSENT, bytes};
   }
   if (unit.type === 'yamlArrayItem') {
     const state = inspectYamlList(decode(bytes), unit.value);
-    return {fp: state.present ? 'present' : ABSENT, bytes, createdDepth: state.createdDepth};
+    return {fp: state.present ? 'line:' + state.item.body : ABSENT, bytes, createdDepth: state.createdDepth};
   }
   if (valueUnit(unit)) {
     if (bytes === null) return {fp: ABSENT, bytes};
     let value;
     try { value = unit.type === 'jsonArrayRecord' ? getRecord(decode(bytes), unit.pointer, unit.value) : getKey(decode(bytes), unit.pointer); }
     catch (error) { throw new Error(`Cannot edit JSON in ${unit.path}: ${error.message}`); }
-    return {fp: value === undefined ? ABSENT : 'value:' + JSON.stringify(value), bytes};
+    const raw = unit.exactSource && value !== undefined ? unit.type === 'jsonArrayRecord'
+      ? rawRecord(decode(bytes), unit.pointer, unit.value) : rawMember(decode(bytes), unit.pointer) : undefined;
+    return {fp: value === undefined ? ABSENT : unit.exactSource ? 'raw:' + raw : 'value:' + JSON.stringify(value), value, bytes};
   }
   throw new Error(`Unknown unit type ${unit.type}`);
 }
 
 /** Fingerprint a unit would have after writing `side` ('before' | 'after'). */
 export function fingerprintOf(unit, side) {
+  if (unit[side + 'Fingerprint'] !== undefined) return unit[side + 'Fingerprint'];
   if (unit.type === 'file') {
     const bytes = unit[side + 'Bytes'];
     return bytes === null ? ABSENT : 'sha256:' + sha256(bytes);
@@ -79,12 +77,19 @@ export function render(unit, side, current) {
     if (line === null && unit.fileCreated && text.trim() === '') return null;
     return Buffer.from(text);
   }
-  // New plugin drivers preserve even empty-object/array whitespace on undo.
-  // If unrelated content changed, fall back to the surgical edit; existing
-  // drivers and old state records keep their original rendering behavior.
+  // R11: restore the largest unchanged source span, not a reserialized value.
   if (side === 'before' && unit.layoutAfter !== undefined && decode(current) === unit.layoutAfter)
     return unit.layoutBefore === null ? null : Buffer.from(unit.layoutBefore);
+  if (side === 'before' && current !== null) for (const span of unit.jsonSpans ?? []) {
+    if (span.before !== undefined && rawAt(decode(current), span.pointer) === span.after)
+      return Buffer.from(replaceRawAt(decode(current), span.pointer, span.before));
+  }
   if (unit.type === 'yamlArrayItem') {
+    if (side === 'before' && unit.yamlPatch?.after) {
+      const text = decode(current), at = text.indexOf(unit.yamlPatch.after);
+      if (at >= 0 && text.indexOf(unit.yamlPatch.after, at + 1) < 0)
+        return Buffer.from(text.slice(0, at) + unit.yamlPatch.before + text.slice(at + unit.yamlPatch.after.length));
+    }
     const text = editYamlList(decode(current), unit.value, unit[side + 'Present'], unit.createdDepth);
     return unit.fileCreated && !text.trim() ? null : Buffer.from(text);
   }
@@ -94,7 +99,8 @@ export function render(unit, side, current) {
     let text = current === null ? '{}\n' : decode(current);
     if (value !== undefined) {
       text = ensureParents(text, unit.pointer);
-      return Buffer.from(unit.type === 'jsonArrayRecord' ? setRecord(text, unit.pointer, unit.value, value) : setKey(text, unit.pointer, value));
+      return Buffer.from(unit.type === 'jsonArrayRecord' ? setRecord(text, unit.pointer, unit.value, value,
+        side === 'before' ? unit.recordBefore : undefined) : setKey(text, unit.pointer, value));
     }
     text = unit.type === 'jsonArrayRecord' ? setRecord(text, unit.pointer, unit.value, undefined) : setKey(text, unit.pointer, undefined);
     // Keep the original existing-file jsonKey removal behavior for old records.
@@ -138,16 +144,38 @@ function ensureParents(text, pointer) {
   return text;
 }
 
-/** Write one side of a unit. Returns directories created. */
-export async function apply(unit, side) {
-  const current = await readFile(unit.path);
-  const next = render(unit, side, current);
-  if (side === 'after' && (unit.preserveLayout || ['yamlArrayItem', 'jsonArrayRecord'].includes(unit.type) || unit.type === 'jsonKey' && (unit.fileCreated || unit.createdDepth > 1))) {
-    unit.layoutBefore = current === null ? null : decode(current);
-    unit.layoutAfter = next === null ? '' : decode(next);
+/** Capture all lexical restoration data from the same bytes used to render. */
+export function recordLayout(unit, current, next) {
+  if (unit.type === 'file' || unit.type === 'tomlKey') return;
+  unit.layoutBefore = current === null ? null : decode(current);
+  unit.layoutAfter = next === null ? '' : decode(next);
+  if (unit.type === 'yamlArrayItem') {
+    unit.beforeFingerprint = inspectBytes(unit, current).fp;
+    unit.afterFingerprint = inspectBytes(unit, next).fp;
+    const before = unit.layoutBefore ?? '', after = unit.layoutAfter;
+    let start = 0, endBefore = before.length, endAfter = after.length;
+    while (start < endBefore && start < endAfter && before[start] === after[start]) start++;
+    while (endBefore > start && endAfter > start && before[endBefore - 1] === after[endAfter - 1]) { endBefore--; endAfter--; }
+    unit.yamlPatch = {before: before.slice(start, endBefore), after: after.slice(start, endAfter)};
+    return;
   }
+  unit.jsonSpans = [];
+  for (let depth = 1; depth <= unit.pointer.length; depth++) {
+    const pointer = unit.pointer.slice(0, depth);
+    unit.jsonSpans.push({pointer, before: current === null ? undefined : rawAt(decode(current), pointer),
+      after: next === null ? undefined : rawAt(decode(next), pointer)});
+  }
+  if (unit.type === 'jsonArrayRecord' && current !== null) unit.recordBefore = rawRecord(decode(current), unit.pointer, unit.value);
+}
+
+/** Write one side conditionally; engine transactions group units by file. */
+export async function apply(unit, side, current = undefined) {
+  if (unit.boundary) await assertBoundary(unit.path, unit.boundary);
+  if (current === undefined) current = await readFile(unit.path);
+  const next = render(unit, side, current);
+  if (side === 'after') recordLayout(unit, current, next);
   if (equalBytes(current, next)) return [];
-  return writeFile(unit.path, next);
+  return writeFile(unit.path, next, {expected: current, boundary: unit.boundary});
 }
 
 export {splitKey};

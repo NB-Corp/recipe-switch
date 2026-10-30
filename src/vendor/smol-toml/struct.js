@@ -101,6 +101,8 @@ export function parseInlineTable(ctx) {
         let hasOwn = false;
         let errPtr = ctx.p;
         let key = parseKey(ctx);
+        const parentPath = ctx.keyPath ?? [], keyPath = [...parentPath, ...key];
+        ctx.onKey?.(keyPath); // recipe-switch: inline option declaration order.
         for (let i = 0; i < key.length; i++) {
             if (i)
                 t = hasOwn ? t[k] : (t[k] = Object.create(null));
@@ -121,7 +123,9 @@ export function parseInlineTable(ctx) {
             TomlError.x('trying to redefine an already defined value', ctx, errPtr);
         }
         skipVoid(ctx, true, true);
+        ctx.keyPath = keyPath;
         let value = extractValue(ctx, 0x7d /* } */);
+        ctx.keyPath = parentPath;
         if (t && typeof (t[k] = value) === 'object')
             seen.add(value);
         skipVoid(ctx);
