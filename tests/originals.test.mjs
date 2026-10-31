@@ -253,9 +253,11 @@ test('O04: 1 MiB install then four restores stores one original blob and at most
 test('O01: failing Windows ACL command refuses blob bytes before capture', async t => {
   if (process.platform !== 'win32') return t.skip('Windows ACL failure injection');
   const b = await box(t), {spawnSync} = await import('node:child_process');
-  const source = `import fs from 'node:fs/promises';import{putBlob}from ${JSON.stringify(new URL('../src/originals.mjs', import.meta.url).href)};process.env.PATH=process.argv[2];process.env.Path=process.argv[2];try{await putBlob({home:process.argv[1]},Buffer.from('PRIVATE MUST NOT WRITE'));process.exit(2)}catch(e){console.log(e.message)}`;
-  const child = spawnSync(process.execPath, ['--input-type=module', '-e', source, b.store.home, b.file('empty-path')], {env: b.env, encoding: 'utf8'});
-  assert.equal(child.status, 0, child.stderr); assert.match(child.stdout, /Cannot secure backup directory; refusing to write/);
+  // Native icacls is resolved through System32, so a PATH stub no longer injects
+  // a failure. Fail execFile itself before the permissions module is imported.
+  const source = `import cp from 'node:child_process';import{syncBuiltinESMExports}from'node:module';const exec=cp.execFile;cp.execFile=(file,...args)=>{if(String(file).toLowerCase().endsWith('icacls.exe')){queueMicrotask(()=>args.at(-1)(Object.assign(Error('injected ACL denial'),{code:'EACCES'})));return;}return exec(file,...args);};cp.execFile[Symbol.for('nodejs.util.promisify.custom')]=(file,args,opts)=>new Promise((resolve,reject)=>cp.execFile(file,args,opts,(error,stdout,stderr)=>error?reject(error):resolve({stdout,stderr})));syncBuiltinESMExports();const{putBlob}=await import(${JSON.stringify(new URL('../src/originals.mjs', import.meta.url).href)});try{await putBlob({home:process.argv[1]},Buffer.from('PRIVATE MUST NOT WRITE'));process.exit(2)}catch(e){console.log(e.message)}`;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', source, b.store.home], {env: b.env, encoding: 'utf8'});
+  assert.equal(child.status, 0, child.stderr); assert.match(child.stdout, /Cannot secure private storage; refusing to write.*injected ACL denial/);
   assert.deepEqual(await fs.readdir(path.join(b.store.home, 'blobs')), []);
 });
 

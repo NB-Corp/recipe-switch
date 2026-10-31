@@ -36,11 +36,16 @@ test('R01: a hand edit during the final conditional read survives without being 
   const b = await box(t), file = path.join(b.home, 'main');
   await install(b, [fileUnit(file, 'MANAGED 1')]);
   const planned = await preview(b, [fileUnit(file, 'MANAGED 2')]);
-  const originalRead = fs.readFile, originalWrite = fs.writeFile; let backupDone = false, injected = false;
-  fs.writeFile = async function (target, ...args) {
-    const result = await originalWrite(target, ...args);
-    if (path.basename(String(target)).startsWith('index.json.recipe-switch-')) backupDone = true;
-    return result;
+  const originalRead = fs.readFile, originalWrite = fs.writeFile, originalOpen = fs.open; let backupDone = false, injected = false;
+  // R28 now writes through an already-permissioned FileHandle, not fs.writeFile.
+  // Keep the same injection boundary: backup index bytes written, final read not yet run.
+  fs.open = async function (target, ...args) {
+    const handle = await originalOpen(target, ...args);
+    if (path.basename(String(target)).startsWith('index.json.recipe-switch-') && args[0] === 'wx') {
+      const write = handle.writeFile.bind(handle);
+      handle.writeFile = async (...values) => { const result = await write(...values); backupDone = true; return result; };
+    }
+    return handle;
   };
   fs.readFile = async function (target, ...args) {
     const bytes = await originalRead(target, ...args);
@@ -50,7 +55,7 @@ test('R01: a hand edit during the final conditional read survives without being 
     return bytes;
   };
   try { await assert.rejects(applyPlan(b.store, planned), /Changed during operation/); }
-  finally { fs.readFile = originalRead; fs.writeFile = originalWrite; }
+  finally { fs.readFile = originalRead; fs.open = originalOpen; }
   assert.equal(injected, true);
   assert.equal(await fs.readFile(file, 'utf8'), 'USER AFTER BACKUP');
   assert.equal((await b.store.target(planned.key)).stack.length, 1);
