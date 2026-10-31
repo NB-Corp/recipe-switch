@@ -236,9 +236,12 @@ export async function writeFile(file, bytes, options = {}) {
       try {
         ownTemp = inodeIdentity(await handle.stat({bigint: true}));
         await onStage('temp-created', {tempIdentity: ownTemp});
-        // Empty until the original target's permissions are in place (also on compensation).
+        // R28/R32: ACL commands operate on names, but payload uses this handle.
+        // Refuse a swapped path both before and after setting its permissions.
+        if (!sameIdentity(await pathIdentity(temp), ownTemp)) throw messageError(replacedWarning(temp));
         if (options.privateRoot) await privateFile(temp);
         else await copyPermissions(file, temp, options);
+        if (!sameIdentity(await pathIdentity(temp), ownTemp)) throw messageError(replacedWarning(temp));
         await handle.writeFile(bytes);
         if (options.durable) await handle.sync();
       } finally { await handle.close(); }

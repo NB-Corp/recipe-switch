@@ -44,9 +44,24 @@ async function savedAcl(file, fn, recursive = false) {
     return await fn(text, scratch);
   } finally { await fs.unlink(scratch).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
 }
-const trustees = {WD: 'S-1-1-0', BU: 'S-1-5-32-545', AU: 'S-1-5-11', CO: 'S-1-3-0',
-  CG: 'S-1-3-1', NU: 'S-1-5-2', IU: 'S-1-5-4', SU: 'S-1-5-6', AN: 'S-1-5-7',
+const trustees = {WD: 'S-1-1-0', BU: 'S-1-5-32-545', BG: 'S-1-5-32-546', BA: 'S-1-5-32-544', SY: 'S-1-5-18',
+  AU: 'S-1-5-11', CO: 'S-1-3-0', CG: 'S-1-3-1', NU: 'S-1-5-2', IU: 'S-1-5-4', SU: 'S-1-5-6', AN: 'S-1-5-7',
   LS: 'S-1-5-19', NS: 'S-1-5-20', AC: 'S-1-15-2-1', RC: 'S-1-5-12'};
+const resolvedTrustees = new Map(Object.entries(trustees));
+async function principalSid(trustee) {
+  if (/^S-1-\d+(?:-\d+)+$/i.test(trustee)) return trustee;
+  if (!resolvedTrustees.has(trustee)) {
+    // ConvertStringSidToSid (via .NET) knows every SDDL alias, including domain
+    // aliases; do not guess a localized account name or reject a valid SID.
+    const {stdout} = await execute(native('WindowsPowerShell\\v1.0\\powershell'), ['-NoProfile', '-NonInteractive', '-Command',
+      '$ErrorActionPreference="Stop"; $s = New-Object System.Security.Principal.SecurityIdentifier($env:RS_ACL_TRUSTEE); $s.Value'],
+    {windowsHide: true, env: {...process.env, RS_ACL_TRUSTEE: trustee}});
+    const sid = stdout.trim();
+    if (!/^S-1-\d+(?:-\d+)+$/i.test(sid)) throw aclError(`cannot resolve SID ${trustee}`);
+    resolvedTrustees.set(trustee, sid);
+  }
+  return resolvedTrustees.get(trustee);
+}
 async function secureWindows(file, directory, recursive) {
   const sid = await userSid();
   await icacls([file, '/inheritance:r', '/grant:r', `*${sid}:${directory ? '(OI)(CI)' : ''}F`, ...(recursive ? ['/t'] : []), '/q']);
@@ -114,35 +129,66 @@ export async function copyPermissions(source, temp, {privateWhenMissing = false}
   }
   await savedAcl(source, async text => {
     const lines = text.trimEnd().split(/\r?\n/), sddl = lines[1];
-    if (lines.length !== 2 || !sddl?.startsWith('D:')) throw new Error('Invalid saved target ACL');
-    const aces = [...sddl.matchAll(/\(([^()]*)\)/g)].map(match => match[1].split(';'));
-    if (!aces.length || aces.some(([type, flags, , object, inherited]) => !['A', 'D'].includes(type) || object || inherited || flags.replace(/OI|CI|IO|NP|ID/g, '')))
-      throw new Error('Unsupported target ACL; refusing to write');
+    if (lines.length !== 2 || !sddl?.startsWith('D:')) throw aclError('invalid target DACL');
+    const {aces, protected: protectedAcl} = parseAcl(sddl);
+    // R31: an ordinary sibling inherits equivalent ACEs. AI is Windows' auto-
+    // inheritance bookkeeping, not an additional permission or a protection bit.
+    if (!protectedAcl && aces.every(([, flags]) => flags.includes('ID'))) {
+      const inherited = await readAcl(temp);
+      if (equivalentAcl(sddl, inherited)) return;
+    }
     // /restore requires SeRestorePrivilege on some Windows installations. Copy
-    // ordinary DACL grants/denies with icacls instead, then verify exact SDDL.
-    await icacls([temp, sddl.slice(2).split('(')[0].includes('P') ? '/inheritance:r' : '/inheritance:e', '/q']);
+    // ordinary DACL grants/denies with icacls, then verify the complete DACL.
+    await icacls([temp, protectedAcl ? '/inheritance:r' : '/inheritance:e', '/q']);
     const bits = [[0x10000000, 'GA'], [0x20000000, 'GE'], [0x40000000, 'GW'], [0x80000000, 'GR'],
       [1, 'RD'], [2, 'WD'], [4, 'AD'], [8, 'REA'], [16, 'WEA'], [32, 'X'], [64, 'DC'], [128, 'RA'], [256, 'WA'],
       [0x10000, 'DE'], [0x20000, 'RC'], [0x40000, 'WDAC'], [0x80000, 'WO'], [0x100000, 'S'], [0x1000000, 'AS'], [0x2000000, 'MA']];
-    for (const [type, flags, mask, , , trustee] of aces) {
+    for (const [type, flags, mask, , , trustee] of [...aces].sort((a, b) => (a[0] === 'D' ? 0 : 1) - (b[0] === 'D' ? 0 : 1))) {
       if (flags.includes('ID')) continue; // Same parent supplies the same inherited ACEs.
-      const principal = trustee.startsWith('S-1-') ? trustee : ({SY: 'S-1-5-18', BA: 'S-1-5-32-544', ...trustees})[trustee];
-      if (!principal) throw new Error(`Unsupported target ACL trustee: ${trustee}`);
-      let rights;
-      if (/^0x[0-9a-f]+$/i.test(mask)) {
-        let remaining = Number(mask); rights = [];
-        for (const [bit, name] of bits) if ((remaining & bit) !== 0) { rights.push(name); remaining = (remaining & ~bit) >>> 0; }
-        if (remaining || !rights.length) throw new Error('Unsupported target ACL mask');
-      } else {
-        const names = {FA: 'F', FR: 'R', FW: 'W', FX: 'RX', GA: 'GA', GR: 'GR', GW: 'GW', GX: 'GE'};
-        rights = [names[mask]];
-        if (!rights[0]) throw new Error('Unsupported target ACL rights');
-      }
+      const principal = await principalSid(trustee);
+      let remaining = maskValue(mask); const rights = [];
+      for (const [bit, name] of bits) if ((remaining & bit) !== 0) { rights.push(name); remaining = (remaining & ~bit) >>> 0; }
+      if (remaining || !rights.length) throw aclError(`unrepresentable access mask ${mask}`);
       const inheritance = (flags.match(/OI|CI|IO|NP/g) ?? []).map(flag => `(${flag})`).join('');
-      await icacls([temp, type === 'D' ? '/deny' : '/grant', `*${principal}:${inheritance}(${rights.join(',')})`, '/q']);
+      try { await icacls([temp, type === 'D' ? '/deny' : '/grant', `*${principal}:${inheritance}(${rights.join(',')})`, '/q']); }
+      catch (error) {
+        if (error.code !== 1332) throw error; // Unknown account, not a permission denial.
+        await execute(native('WindowsPowerShell\\v1.0\\powershell'), ['-NoProfile', '-NonInteractive', '-Command',
+          '$ErrorActionPreference="Stop"; $a=New-Object System.Security.AccessControl.FileSecurity; $a.SetSecurityDescriptorSddlForm($env:RS_ACL_SDDL,[System.Security.AccessControl.AccessControlSections]::Access); [IO.File]::SetAccessControl($env:RS_ACL_PATH,$a)'],
+        {windowsHide: true, env: {...process.env, RS_ACL_SDDL: sddl, RS_ACL_PATH: temp}});
+        break; // .NET preserves unresolved numeric SIDs that icacls refuses to map.
+      }
     }
-    await savedAcl(temp, async actual => {
-      if (actual.trimEnd().split(/\r?\n/)[1] !== sddl) throw new Error('Target ACL could not be copied exactly; refusing to write');
-    });
+    if (!equivalentAcl(sddl, await readAcl(temp))) throw aclError('replacement ACEs differ from the original');
   });
 }
+
+const aclError = reason => new Error(`无法保留目标权限（${reason}），已停止写入。请在 Windows 安全设置中将此文件的条件/对象权限改为普通允许/拒绝权限后重试，或手动安装。 / Cannot preserve target ACL (${reason}); writing stopped. Use Windows Security to replace conditional/object permissions with ordinary allow/deny entries, then retry, or install manually.`);
+function maskValue(mask) {
+  if (/^0x[0-9a-f]+$/i.test(mask)) return Number(mask) >>> 0;
+  const values = {FA: 0x1f01ff, FR: 0x120089, FW: 0x120116, FX: 0x1200a0, GA: 0x10000000, GX: 0x20000000, GW: 0x40000000, GR: 0x80000000,
+    CC: 1, DC: 2, LC: 4, SW: 8, RP: 16, WP: 32, DT: 64, LO: 128, CR: 256, SD: 0x10000, RC: 0x20000, WD: 0x40000, WO: 0x80000};
+  const parts = mask.match(/../g) ?? [];
+  if (parts.join('') !== mask || parts.some(p => values[p] === undefined)) throw aclError(`unsupported rights ${mask}`);
+  return parts.reduce((n, p) => (n | values[p]) >>> 0, 0);
+}
+function parseAcl(sddl) {
+  const header = sddl?.match(/^D:([A-Z]*)/)?.[1];
+  const entries = [...(sddl ?? '').matchAll(/\(([^()]*)\)/g)];
+  if (header === undefined || sddl.slice(2 + header.length) !== entries.map(m => m[0]).join('')) throw aclError('conditional or malformed ACE');
+  const aces = entries.map(m => m[1].split(';'));
+  if (aces.some(a => a.length !== 6 || !['A', 'D'].includes(a[0]) || a[3] || a[4] || a[1].replace(/OI|CI|IO|NP|ID/g, '')))
+    throw aclError('object/conditional ACE or unsupported inheritance flag');
+  return {protected: header.includes('P'), aces};
+}
+export function equivalentAcl(a, b) {
+  const left = parseAcl(a), right = parseAcl(b);
+  // Preserve P and every ACE flag. Ignore only AI/AR bookkeeping and ACE order.
+  const normalize = x => x.aces.map(ace => ace.map((part, i) => i === 5 ? (trustees[part] ?? part) : part).join(';')).sort();
+  return left.protected === right.protected && JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
+}
+export const readAcl = file => savedAcl(file, text => {
+  const lines = text.trimEnd().split(/\r?\n/);
+  if (lines.length !== 2 || !lines[1]?.startsWith('D:')) throw aclError('invalid saved target DACL');
+  return lines[1];
+});
