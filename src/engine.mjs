@@ -9,7 +9,7 @@ import {readFile, writeFile, restoreDisplaced, rmdirIfEmpty, equalBytes, toPosix
 import {inspect, inspectBytes, fingerprintOf, render, recordLayout, identity, ABSENT} from './units.mjs';
 import {unifiedDiff} from './diff.mjs';
 import {prepareOriginals, publishOriginals, readOriginals, originalBytes, collectOrphanBlobs, originalManifestPath, putBlob} from './originals.mjs';
-import {privateDirectory} from './private-storage.mjs';
+import {privateDirectory, privateFile} from './private-storage.mjs';
 import {releaseCarrierReferences, retireCarriers} from './retained.mjs';
 import {note, blockedMessage, format, messageError} from './i18n.mjs';
 
@@ -72,6 +72,7 @@ async function archiveDisplaced(store, journal, row, artifact = row) {
   if (await exists(artifact.archive)) throw new Error(`Backup destination already exists: ${toPosix(artifact.archive)}`);
   try { await fs.rename(artifact.displaced, artifact.archive); }
   catch (error) { if (error.code !== 'EXDEV') throw error; artifact.external = true; }
+  if (!artifact.external) await privateFile(artifact.archive);
   artifact.phase = 'archived'; await store.journal(journal);
 }
 async function retainedIndex(store, journal) {
@@ -90,7 +91,7 @@ async function retainedIndex(store, journal) {
     }
   }
   await assertBoundary(file, journal.backupBoundary);
-  await writeFile(file, Buffer.from(JSON.stringify(index, null, 2) + '\n'), {durable: true});
+  await writeFile(file, Buffer.from(JSON.stringify(index, null, 2) + '\n'), {durable: true, privateRoot: store.home});
 }
 async function cleanTemp(store, row, artifact) {
   if (!artifact.temp) return;
@@ -164,7 +165,7 @@ export class Store {
     if (value.schema !== 1) throw new Error(`Unsupported state schema in ${this.file}`);
     return value;
   }
-  async journal(value) { await writeFile(this.pending, Buffer.from(JSON.stringify(value) + '\n'), {durable: true}); }
+  async journal(value) { await writeFile(this.pending, Buffer.from(JSON.stringify(value) + '\n'), {durable: true, privateRoot: this.home}); }
   async recover() {
     const bytes = await readFile(this.pending);
     if (bytes === null) return;
@@ -222,7 +223,7 @@ export class Store {
     return fn(state);
   }); }
   async load() { return this.transaction(state => state); }
-  async save(state) { await writeFile(this.file, stateBytes(state), {durable: true}); }
+  async save(state) { await writeFile(this.file, stateBytes(state), {durable: true, privateRoot: this.home}); }
   async target(key) { return (await this.load()).targets[key] ?? null; }
   async update(fn) { return this.transaction(async state => { const result = await fn(state); await this.save(state); return result; }); }
 }

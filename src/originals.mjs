@@ -34,7 +34,7 @@ export async function putBlob(store, bytes) {
   await assertBoundary(file, await captureBoundary(store.home));
   await privateDirectory(dir);
   if (process.platform !== 'win32' && await readFile(file) !== null) await fs.chmod(file, 0o600);
-  if (await readFile(file) === null) await writeFile(file, bytes, {expected: null, durable: true, mode: 0o600});
+  if (await readFile(file) === null) await writeFile(file, bytes, {expected: null, durable: true, mode: 0o600, privateRoot: store.home});
   else await originalBytes(store, {existed: true, hash, size: bytes.length, path: toPosix(file)});
   return hash;
 }
@@ -63,7 +63,7 @@ export async function prepareOriginals(store, harness, home, candidates) {
 export async function publishOriginals(store, staged) {
   if (!staged) return;
   await assertBoundary(staged.path, await captureBoundary(store.home));
-  await writeFile(staged.path, staged.value === null ? null : Buffer.from(JSON.stringify(staged.value, null, 2) + '\n'), {durable: true});
+  await writeFile(staged.path, staged.value === null ? null : Buffer.from(JSON.stringify(staged.value, null, 2) + '\n'), {durable: true, privateRoot: store.home});
 }
 
 /** Called only after restore-original committed and removed the target's stack. */

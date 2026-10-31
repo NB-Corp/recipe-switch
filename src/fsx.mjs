@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {note, format, messageError} from './i18n.mjs';
+import {privateDirectory, privateFile, copyPermissions} from './private-storage.mjs';
 
 export const sha256 = bytes => crypto.createHash('sha256').update(bytes ?? Buffer.alloc(0)).digest('hex');
 
@@ -127,7 +128,7 @@ async function runHardlinkProbe(file, boundary, stateDir) {
   const creationBoundary = await captureBoundary(cursor);
   const record = {id, pid: process.pid, target: file, boundary, probe: source, link: source + '.link',
     createdDirs: missing.map(path => ({path, boundary: creationBoundary, identity: null}))};
-  const save = () => writeFile(journal, Buffer.from(JSON.stringify(record)), {durable: true});
+  const save = () => writeFile(journal, Buffer.from(JSON.stringify(record)), {durable: true, privateRoot: stateDir});
   let linking = false;
   activeProbes.add(id);
   try {
@@ -173,11 +174,7 @@ export async function restoreDisplaced(file, displaced, boundary, {sourceBoundar
   await fs.unlink(displaced);
 }
 
-/** Flush a file before publishing its name (journals must precede target moves). */
-async function syncFile(file) {
-  const handle = await fs.open(file, 'r+');
-  try { await handle.sync(); } finally { await handle.close(); }
-}
+/** Flush directory metadata after publishing a name. */
 async function syncDirectory(dir) {
   let handle;
   try { handle = await fs.open(dir, 'r'); await handle.sync(); }
@@ -189,6 +186,12 @@ async function syncDirectory(dir) {
 export async function writeFile(file, bytes, options = {}) {
   const {boundary, retainDisplaced = false, onStage = async () => {}} = options;
   if (boundary) await assertBoundary(file, boundary);
+  if (options.privateRoot) {
+    await assertBoundary(file, await captureBoundary(options.privateRoot));
+    await privateDirectory(options.privateRoot, {recursive: false});
+    if (bytes !== null) await privateDirectory(path.dirname(file), {recursive: false});
+    if (await exists(file)) await privateFile(file);
+  }
   const created = bytes === null ? [] : await mkdirp(path.dirname(file));
   const temp = options.temp ?? `${file}.recipe-switch-${process.pid}-${crypto.randomUUID()}.tmp`;
   const displaced = options.displaced ?? `${file}.recipe-switch-${crypto.randomUUID()}.displaced`;
@@ -196,19 +199,15 @@ export async function writeFile(file, bytes, options = {}) {
   try {
     if (boundary) await assertBoundary(temp, boundary);
     if (bytes !== null) {
-      if (options.temp) {
-        const handle = await fs.open(temp, 'wx', options.mode ?? 0o600);
-        try {
-          ownTemp = inodeIdentity(await handle.stat({bigint: true}));
-          await onStage('temp-created', {tempIdentity: ownTemp});
-          await handle.writeFile(bytes);
-          if (options.durable) await handle.sync();
-        } finally { await handle.close(); }
-      } else {
-        await fs.writeFile(temp, bytes, {flag: 'wx', mode: options.mode ?? 0o600});
-        ownTemp = inodeIdentity(await fs.stat(temp, {bigint: true}));
-        if (options.durable) await syncFile(temp);
-      }
+      const handle = await fs.open(temp, 'wx', options.mode ?? (options.privateRoot ? 0o600 : 0o666));
+      try {
+        ownTemp = inodeIdentity(await handle.stat({bigint: true}));
+        await onStage('temp-created', {tempIdentity: ownTemp});
+        // Empty until the original target's permissions are in place (also on compensation).
+        await copyPermissions(file, temp);
+        await handle.writeFile(bytes);
+        if (options.durable) await handle.sync();
+      } finally { await handle.close(); }
     }
     if (boundary) await assertBoundary(file, boundary);
     if ('expected' in options) {
@@ -256,7 +255,7 @@ export async function writeFile(file, bytes, options = {}) {
 
 /** R02: cross-process lock; a dead owner's lock is reclaimable, never a live one. */
 export async function withLock(home, fn, name = 'transaction.lock') {
-  await mkdirp(home);
+  await privateDirectory(home, {recursive: false});
   const lock = path.join(home, name), token = crypto.randomUUID(), started = Date.now();
   for (;;) {
     try {
@@ -300,7 +299,7 @@ export async function withLock(home, fn, name = 'transaction.lock') {
       await new Promise(resolve => setTimeout(resolve, 15));
     }
   }
-  try { return await fn(); }
+  try { if (name === 'transaction.lock') await privateDirectory(home); return await fn(); }
   finally {
     const owner = JSON.parse(await fs.readFile(lock, 'utf8'));
     if (owner.token === token) await fs.unlink(lock);

@@ -40,7 +40,7 @@ export class Service {
   async saveConfig(next) {
     const current = await this.config();
     const value = {...current, ...next};
-    await writeFile(path.join(this.store.home, 'config.json'), Buffer.from(JSON.stringify(value, null, 2) + '\n'));
+    await writeFile(path.join(this.store.home, 'config.json'), Buffer.from(JSON.stringify(value, null, 2) + '\n'), {privateRoot: this.store.home});
     return value;
   }
   async catalog() {
