@@ -27,6 +27,10 @@ const CATALOG = {
     en: 'Could not complete the hard-link safety probe; check directory access permissions.',
     detail: '{path} ({error})',
   },
+  'safety.probeCleanupPending': {
+    zh: '探测清理待处理：无法确认未登记的路径，已保留路径和恢复记录。请检查后手动清理：{path}',
+    en: 'Probe cleanup pending: the unregistered path could not be confirmed. Path and recovery record kept; inspect before manual cleanup: {path}',
+  },
   'safety.rollbackPending': {
     zh: '这个文件的回滚没能完成，因为文件系统不再支持安全写入。当前内容是 {current}，应为 {expected}，备份在 {backup}。请先保留当前文件，再从备份恢复应有版本，或恢复硬链接能力后重试。',
     en: 'Rollback could not complete because the filesystem no longer supports safe writes. Current content is {current}; expected {expected}; backup: {backup}. Preserve the current file, then restore the expected version from backup, or restore hard-link support and retry.',

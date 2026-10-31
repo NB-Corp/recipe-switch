@@ -83,15 +83,39 @@ export async function removeIdentified(file, identity, {directory = false, bound
   if (directory) await rmdirIfEmpty(file); else await fs.unlink(file);
 }
 const activeProbes = new Set();
+const PROBE_CONTENT = Buffer.from('recipe-switch hardlink probe v1\n');
 async function cleanProbe(record, warn) {
+  if (!/^[a-f0-9-]{36}$/.test(record.id)) throw new Error('Invalid safety probe id');
+  let complete = true;
   const source = path.join(path.dirname(record.target), `.recipe-switch-probe-${record.id}.tmp`);
   for (const [file, identity, expected] of [[record.link, record.linkIdentity, source + '.link'], [record.probe, record.probeIdentity, source]]) {
-    if (file !== expected || path.resolve(file) !== file) { warn(replacedWarning(file)); continue; }
-    await removeIdentified(file, identity, {warn, boundary: record.boundary});
+    if (file !== expected || path.resolve(file) !== file) { warn(replacedWarning(file)); complete = false; continue; }
+    if (identity) await removeIdentified(file, identity, {warn, boundary: record.boundary});
+    else if (await exists(file)) {
+      // A crash may happen after creating the marker but before recording its inode.
+      // An unregistered path needs both this probe's UUID and the fixed payload.
+      try {
+        await assertBoundary(file, record.boundary);
+        const found = await pathIdentity(file);
+        if (!found || !equalBytes(await readFile(file), PROBE_CONTENT)) throw new Error('Unknown probe content');
+        await removeIdentified(file, found, {warn, boundary: record.boundary});
+      } catch { warn(replacedWarning(file)); complete = false; }
+    }
   }
   for (const item of [...record.createdDirs].reverse()) {
-    await removeIdentified(item.path, item.identity, {directory: true, warn, boundary: item.boundary ?? record.boundary});
+    if (item.identity) await removeIdentified(item.path, item.identity, {directory: true, warn, boundary: item.boundary ?? record.boundary});
+    else if (item.newlyCreated && await exists(item.path)) {
+      try {
+        if (path.resolve(item.path) !== item.path || !isInside(item.path, path.dirname(record.target))) throw new Error('Invalid probe directory');
+        await assertBoundary(item.path, item.boundary ?? record.boundary);
+        const stat = await fs.lstat(item.path);
+        if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('Replaced probe directory');
+        // Never remove contents or a nonempty directory, even without an identity.
+        if (!await rmdirIfEmpty(item.path)) complete = false;
+      } catch { warn(replacedWarning(item.path)); complete = false; }
+    }
   }
+  return complete;
 }
 export async function recoverProbes(stateDir, warn = message => process.emitWarning(typeof message === 'string' ? message : format(message))) {
   return withLock(stateDir, () => recoverProbeRecords(stateDir, warn), 'probe.lock');
@@ -108,7 +132,8 @@ async function recoverProbeRecords(stateDir, warn) {
       try { process.kill(record.pid, 0); continue; } catch (error) { if (error.code !== 'ESRCH') continue; }
     }
     if (name !== record.id + '.json') { warn(replacedWarning(file)); continue; }
-    await cleanProbe(record, warn); await writeFile(file, null, {durable: true});
+    if (await cleanProbe(record, warn)) await writeFile(file, null, {durable: true});
+    else warn(note('safety.probeCleanupPending', {path: toPosix(file)}));
   }
   await rmdirIfEmpty(root);
 }
@@ -135,11 +160,16 @@ async function runHardlinkProbe(file, boundary, stateDir) {
     await save();
     for (const item of record.createdDirs) {
       await assertBoundary(item.path, item.boundary);
-      try { await fs.mkdir(item.path); } catch (error) { if (error.code === 'EEXIST') continue; throw error; }
+      item.newlyCreated = true; await save(); // Creation intent is durable before mkdir.
+      try { await fs.mkdir(item.path); } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+        item.newlyCreated = false; await save(); continue;
+      }
       item.identity = inodeIdentity(await fs.stat(item.path, {bigint: true})); await save();
     }
     await assertBoundary(source, boundary);
-    const handle = await fs.open(source, 'wx', 0o600);
+    await fs.writeFile(source, PROBE_CONTENT, {flag: 'wx', mode: 0o600});
+    const handle = await fs.open(source, 'r+');
     try {
       record.probeIdentity = inodeIdentity(await handle.stat({bigint: true}));
       record.linkIdentity = record.probeIdentity; await save(); await handle.sync();
@@ -150,7 +180,10 @@ async function runHardlinkProbe(file, boundary, stateDir) {
     return {id: linking && unsupportedLink(error) ? 'safety.hardlinksUnsupported' : 'safety.probeFailed',
       vars: {path: toPosix(dir), error: error.code ?? error.message}};
   } finally {
-    try { await cleanProbe(record, message => process.emitWarning(typeof message === 'string' ? message : format(message))); await writeFile(journal, null, {durable: true}); await rmdirIfEmpty(path.dirname(journal)); }
+    try {
+      if (await cleanProbe(record, message => process.emitWarning(typeof message === 'string' ? message : format(message)))) await writeFile(journal, null, {durable: true});
+      await rmdirIfEmpty(path.dirname(journal));
+    }
     finally { activeProbes.delete(id); }
   }
 }
