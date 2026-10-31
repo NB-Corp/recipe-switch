@@ -86,11 +86,12 @@ export class Service {
       if (target.missing) { Object.assign(row, {present: await exists(target.home), detail: 'no profiles found', live: [], foreign: [], managed: {installed: false, history: [], drift: []}}); rows.push(row); continue; }
       try {
         const found = await driver.detect(target.home, {gwtRoot: gwt, env: this.env});
-        Object.assign(row, found, {managed: await status(this.store, driver.id, target.home),
+        Object.assign(row, found);
+        Object.assign(row, {managed: await status(this.store, driver.id, target.home),
           originals: await this.originals({harness: driver.id, home: target.home})});
         if (driver.choices) row.choices = await driver.choices(target.home);
         if (found.capabilities) row.capability = {...found.capabilities, state: found.capabilities.state ?? 'unknown'};
-      } catch (error) { Object.assign(row, {present: false, error: error.message, ...(error.note ? {errorNote: error.note} : {}), live: [], foreign: [], managed: {installed: false, history: [], drift: []}}); }
+      } catch (error) { Object.assign(row, {present: row.present ?? await exists(target.home), error: error.message, ...(error.note ? {errorNote: error.note} : {}), live: [], foreign: [], managed: {installed: false, history: [], drift: []}}); }
       rows.push(row);
     }
     const uncovered = [];

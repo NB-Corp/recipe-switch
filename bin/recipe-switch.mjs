@@ -94,6 +94,11 @@ export async function main(argv = process.argv.slice(2), service = new Service()
     if (flags.json) { console.log(JSON.stringify(view, null, 2)); return; }
     console.log(`State: ${view.stateHome}`);
     for (const row of view.targets) {
+      if (row.error) {
+        console.log(`\n${row.name}${row.label ? ` [${row.label}]` : ''}  ${format({id: 'status.unavailable'}, lang)}  ${row.home}`);
+        console.log(`  ${row.errorNote ? format(row.errorNote, lang) : row.error}`);
+        continue;
+      }
       const managed = row.managed?.installed ? `recipe-switch: ${row.managed.recipe.key}` : 'recipe-switch: —';
       const others = (row.live ?? []).filter(item => !item.managed).map(item => `${textOf(item.label, lang)} (${item.where})`);
       console.log(`\n${row.name}${row.label ? ` [${row.label}]` : ''}  ${row.present ? 'detected' : 'not found'}  ${row.home}\n  ${managed}`);

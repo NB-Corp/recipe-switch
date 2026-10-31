@@ -106,6 +106,7 @@ const CATALOG = {
   'sample.research.description': {zh: '主代理、子代理和独立代理中的科研专节。', en: 'The dedicated research sections in Main, Sub and Independent.'},
   'sample.steer.name': {zh: '每轮提醒', en: 'Per-turn reminders'},
   'sample.steer.description': {zh: '在支持的事件中注入用户、子代理和任务结果提醒。', en: 'User, Sub and agent/task steering at supported events.'},
+  'status.unavailable': {zh: '状态读取受阻', en: 'Status blocked'},
   'status.edited': {zh: '已手动修改', en: 'Edited'},
   'status.missing': {zh: '文件已缺失', en: 'Missing'},
   'action.create': {zh: '新建', en: 'Create'},
