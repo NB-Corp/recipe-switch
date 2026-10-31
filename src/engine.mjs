@@ -9,7 +9,7 @@ import {readFile, writeFile, restoreDisplaced, rmdirIfEmpty, equalBytes, toPosix
 import {inspect, inspectBytes, fingerprintOf, render, recordLayout, identity, ABSENT} from './units.mjs';
 import {unifiedDiff} from './diff.mjs';
 import {prepareOriginals, publishOriginals, readOriginals, originalBytes, collectOrphanBlobs, originalManifestPath, putBlob} from './originals.mjs';
-import {privateDirectory, privateFile} from './private-storage.mjs';
+import {privateDirectory, privateFile, targetPermissions, rememberPrivateParent} from './private-storage.mjs';
 import {releaseCarrierReferences, retireCarriers} from './retained.mjs';
 import {note, blockedMessage, format, messageError} from './i18n.mjs';
 
@@ -72,7 +72,7 @@ async function archiveDisplaced(store, journal, row, artifact = row) {
   if (await exists(artifact.archive)) throw new Error(`Backup destination already exists: ${toPosix(artifact.archive)}`);
   try { await fs.rename(artifact.displaced, artifact.archive); }
   catch (error) { if (error.code !== 'EXDEV') throw error; artifact.external = true; }
-  if (!artifact.external) await privateFile(artifact.archive);
+  if (!artifact.external) { await privateFile(artifact.archive); await rememberPrivateParent(artifact.archive); }
   artifact.phase = 'archived'; await store.journal(journal);
 }
 async function retainedIndex(store, journal) {
@@ -366,10 +366,22 @@ function display(rows) {
       integrity: [before === null ? null : sha256(before), after === null ? null : sha256(after)], added: diff.added, removed: diff.removed, diff: redact(diff.text)};
   }).sort((a, b) => a.path.localeCompare(b.path));
 }
-export async function previewFiles(units, side) { return display(await prepare(units, side)); }
-function checkPreview(rows, planned) {
+const previewPermissions = new WeakMap();
+export async function previewFiles(units, side) {
+  const files = display(await prepare(units, side));
+  previewPermissions.set(files, await targetPermissions(files.map(row => row.path)));
+  return files;
+}
+async function checkPreview(rows, planned) {
   if (JSON.stringify(display(rows).map(f => f.integrity)) !== JSON.stringify(planned.files.map(f => f.integrity)))
     throw new Error('Files changed since the preview; preview again before applying.');
+  const expected = previewPermissions.get(planned.files), actual = await targetPermissions(planned.files.map(row => row.path));
+  for (const row of rows) if (actual.has(row.path)) {
+    // Compare the unnormalized SDDL exactly once before any target mutation.
+    if (expected?.has(row.path) && expected.get(row.path) !== actual.get(row.path))
+      throw new Error(`目标权限自预览后发生变化，请重新预览 / Target ACL changed since preview; preview again: ${toPosix(row.path)}`);
+    row.aclSnapshot = actual.get(row.path); row.aclToken = actual.tokens.get(row.path);
+  }
 }
 async function backup(store, opId, rows) {
   const dir = path.join(store.home, 'backups', opId), index = [];
@@ -380,7 +392,7 @@ async function backup(store, opId, rows) {
     index.push({path: toPosix(row.path), copy: null, sha256: hash,
       blob: hash === null ? null : {hash, size: row.before.length}});
   }
-  await writeFile(path.join(dir, 'index.json'), Buffer.from(JSON.stringify(index, null, 2) + '\n'));
+  await writeFile(path.join(dir, 'index.json'), Buffer.from(JSON.stringify(index, null, 2) + '\n'), {privateRoot: store.home});
   return toPosix(dir);
 }
 async function missingDirs(rows) {
@@ -405,6 +417,7 @@ async function commitFiles(store, rows, state, backupDir, beforeSave, cleanupDir
     for (const row of files) {
       created.push(...await writeFile(row.path, dec(row.after), {expected: dec(row.before), boundary: row.boundary,
         temp: row.temp, displaced: row.displaced, retainDisplaced: true, durable: true,
+        aclSnapshot: rows.find(source => source.path === row.path)?.aclSnapshot, aclToken: rows.find(source => source.path === row.path)?.aclToken,
         warn: message => store.warn(message), onStage: async (phase, details) => { Object.assign(row, details, {phase}); await store.journal(journal); }}));
     }
     for (const row of files) await archiveDisplaced(store, journal, row);
@@ -484,7 +497,7 @@ export async function applyPlan(store, planned) {
     if (!planned.units.length) return {changed: false, code: 'unchanged', message: note('result.unchanged')};
     const units = planned.units.map(unit => ({...unit}));
     const rows = await prepare(units, 'after', 'before');
-    checkPreview(rows, planned);
+    await checkPreview(rows, planned);
     const opId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${planned.id.slice(0, 8)}`;
     const backupDir = await backup(store, opId, rows);
     const target = state.targets[planned.key] ??= {harness: planned.harness, home: planned.home, stack: []};
@@ -540,7 +553,7 @@ export async function applyUndo(store, planned) {
     const units = ops.flatMap(op => op.units.map(deserialize).reverse()).map(unit => ({...unit, boundary: unit.boundary ?? planned.home}));
     if (ops.length === target.stack.length) units.unshift(...await runtimeCleanup(target));
     const rows = await prepare(units, 'before', 'after', planned.force);
-    checkPreview(rows, planned);
+    await checkPreview(rows, planned);
     const backupDir = await backup(store, `${new Date().toISOString().replace(/[:.]/g, '-')}-${crypto.randomUUID()}`, rows);
     target.stack.splice(target.stack.length - ops.length);
     const retirement = !target.stack.length ? await endOriginalCycle(store, state, planned.key, planned.harness, planned.home, rows) : null;
@@ -619,7 +632,7 @@ export async function applyRestoreOriginal(store, planned) {
     // Revalidate blob integrity before any mutation, including a forced restore.
     for (const entry of original.files) await originalBytes(store, entry);
     const rows = await prepare(planned.units.map(unit => ({...unit})), 'after', 'before');
-    checkPreview(rows, planned);
+    await checkPreview(rows, planned);
     if (!target?.stack?.length && rows.every(row => equalBytes(row.before, row.after))) {
       const retirement = await endOriginalCycle(store, state, planned.key, planned.harness, planned.home, rows);
       await store.save(state); await publishOriginals(store, retirement); await collectOrphanBlobs(store);

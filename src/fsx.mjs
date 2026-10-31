@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {note, format, messageError} from './i18n.mjs';
-import {privateDirectory, privateFile, copyPermissions, privateScope, rememberPrivate} from './private-storage.mjs';
+import {privateDirectory, privateFile, copyPermissions, privateScope, rememberPrivate, rememberPrivateParent} from './private-storage.mjs';
 
 export const sha256 = bytes => crypto.createHash('sha256').update(bytes ?? Buffer.alloc(0)).digest('hex');
 
@@ -81,6 +81,7 @@ export async function removeIdentified(file, identity, {directory = false, bound
   if (stat.isSymbolicLink() || !sameIdentity(inodeIdentity(stat), identity)) { warn(replacedWarning(file)); return; }
   if (boundary) try { await assertBoundary(file, boundary); } catch { warn(replacedWarning(file)); return; }
   if (directory) await rmdirIfEmpty(file); else await fs.unlink(file);
+  await rememberPrivateParent(file);
 }
 const activeProbes = new Set();
 const PROBE_CONTENT = Buffer.from('recipe-switch hardlink probe v1\n');
@@ -228,13 +229,16 @@ export async function writeFile(file, bytes, options = {}) {
   const created = bytes === null ? [] : await mkdirp(path.dirname(file));
   const temp = options.temp ?? `${file}.recipe-switch-${process.pid}-${crypto.randomUUID()}.tmp`;
   const displaced = options.displaced ?? `${file}.recipe-switch-${crypto.randomUUID()}.displaced`;
-  let ownTemp = null, moved = false, published = false, displacedIdentity = null;
+  let ownTemp = null, moved = false, published = false, displacedIdentity = null, privateCommitted = false;
   try {
     if (boundary) await assertBoundary(temp, boundary);
     if (bytes !== null) {
       const handle = await fs.open(temp, 'wx', options.mode ?? (options.privateRoot ? 0o600 : 0o666));
       try {
         ownTemp = inodeIdentity(await handle.stat({bigint: true}));
+        // Fresh inode in the audited private parent: no explicit grants exist.
+        // Remember before callbacks so an ACL edit there invalidates this token.
+        if (options.privateRoot) { await rememberPrivate(temp); await rememberPrivateParent(temp); }
         await onStage('temp-created', {tempIdentity: ownTemp});
         // R28/R32: ACL commands operate on names, but payload uses this handle.
         // Refuse a swapped path both before and after setting its permissions.
@@ -274,7 +278,7 @@ export async function writeFile(file, bytes, options = {}) {
       moved = false;
     } else if (bytes === null) await fs.unlink(file).catch(error => { if (error.code !== 'ENOENT') throw error; });
     else await fs.rename(temp, file);
-    if (options.privateRoot && bytes !== null) await rememberPrivate(file);
+    privateCommitted = Boolean(options.privateRoot);
     if (options.durable) await syncDirectory(path.dirname(file));
   } catch (error) {
     if (moved) {
@@ -287,6 +291,10 @@ export async function writeFile(file, bytes, options = {}) {
     throw error;
   } finally {
     if (ownTemp) await removeIdentified(temp, ownTemp, {warn: options.warn});
+    if (options.privateRoot) {
+      if (privateCommitted && bytes !== null) await rememberPrivate(file);
+      await rememberPrivateParent(file);
+    }
   }
   return created;
 }
@@ -299,6 +307,7 @@ export async function withLock(home, fn, name = 'transaction.lock') {
     try {
       const handle = await fs.open(lock, 'wx');
       try { await handle.writeFile(JSON.stringify({pid: process.pid, token})); } finally { await handle.close(); }
+      await rememberPrivate(lock); await rememberPrivateParent(lock);
       break;
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
@@ -340,7 +349,7 @@ export async function withLock(home, fn, name = 'transaction.lock') {
   try { return await privateScope(async () => { if (name === 'transaction.lock') await privateDirectory(home); return fn(); }); }
   finally {
     const owner = JSON.parse(await fs.readFile(lock, 'utf8'));
-    if (owner.token === token) await fs.unlink(lock);
+    if (owner.token === token) { await fs.unlink(lock); await rememberPrivateParent(lock); }
   }
 }
 

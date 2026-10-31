@@ -47,13 +47,13 @@ export async function retireCarriers(store, paths, keepBackup, {onlyBackup} = {}
             (entry.laterVersions ??= []).push({hash, size: current.length, capturedAt: new Date().toISOString(),
               label: '后来写入的版本 / Later-written version', source: saved});
           // Durable blob reference precedes unlink, even if cleanup is interrupted.
-          await writeFile(indexFile, Buffer.from(JSON.stringify(index, null, 2) + '\n'), {durable: true});
+          await writeFile(indexFile, Buffer.from(JSON.stringify(index, null, 2) + '\n'), {durable: true, privateRoot: store.home});
         }
         // This single read is the retention cutoff. No promise for later old-handle writes.
         if (current !== null) await removeIdentified(saved, expectedIdentity, {warn: message => store.warn(message)});
         entry.replacedVersions = entry.replacedVersions.filter(file => file !== saved);
         delete entry.carrierHashes?.[saved]; delete entry.carrierIdentities?.[saved];
-        await writeFile(indexFile, Buffer.from(JSON.stringify(index, null, 2) + '\n'), {durable: true});
+        await writeFile(indexFile, Buffer.from(JSON.stringify(index, null, 2) + '\n'), {durable: true, privateRoot: store.home});
       }
     }
   }

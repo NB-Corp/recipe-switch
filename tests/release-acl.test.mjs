@@ -18,6 +18,8 @@ test('R31: ACL equivalence ignores AI and ACE order, but preserves protection, d
   const a = 'D:(A;ID;FA;;;BA)(A;ID;FR;;;BU)';
   assert.ok(equivalentAcl(a, 'D:AI(A;ID;FR;;;BU)(A;ID;FA;;;BA)'));
   assert.equal(equivalentAcl(a, 'D:P(A;ID;FA;;;BA)(A;ID;FR;;;BU)'), false);
+  assert.equal(equivalentAcl(a, 'D:AR(A;ID;FA;;;BA)(A;ID;FR;;;BU)'), false);
+  assert.ok(equivalentAcl(a, 'D:(A;ID;0x1f01ff;;;BA)(A;ID;0x120089;;;BU)'));
   assert.equal(equivalentAcl(a, 'D:(A;;FA;;;BA)(A;ID;FR;;;BU)'), false);
   assert.equal(equivalentAcl(a, 'D:(D;ID;FA;;;BA)(A;ID;FR;;;BU)'), false);
   assert.throws(() => equivalentAcl('D:(XA;;FA;;;WD;(@User.test == 1))', a), /无法保留目标权限.*Windows 安全设置.*Cannot preserve target ACL.*install manually/);
