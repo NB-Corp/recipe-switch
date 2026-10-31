@@ -1,0 +1,74 @@
+<!doctype html>
+{% assign pl = page.lang | slice: 0, 2 -%}
+{% if pl == "zh" -%}
+{% assign ui = site.data.ui.zh -%}
+{% assign other_lang = "en" -%}
+{% assign other_nav = site.data.nav.en -%}
+{% else -%}
+{% assign ui = site.data.ui.en -%}
+{% assign other_lang = "zh" -%}
+{% assign other_nav = site.data.nav.zh -%}
+{% endif -%}
+{% assign page_key = page.page_id | default: "home" -%}
+{% assign alt_url = other_nav[page_key] -%}
+{% assign self_url = site.data.nav[pl][page_key] -%}
+<html lang="{{ page.lang }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+{% seo title=false %}
+<title>{{ page.title }} · recipe-switch</title>
+<link rel="canonical" href="{{ site.url }}{{ site.baseurl }}{{ self_url }}">
+{% if alt_url -%}
+<link rel="alternate" hreflang="{{ other_lang }}" href="{{ site.url }}{{ site.baseurl }}{{ alt_url }}">
+<link rel="alternate" hreflang="{{ page.lang }}" href="{{ site.url }}{{ site.baseurl }}{{ self_url }}">
+<link rel="alternate" hreflang="x-default" href="{{ site.url }}{{ site.baseurl }}{{ site.data.nav.en[page_key] }}">
+{% endif -%}
+<link rel="icon" href="{{ '/assets/favicon.svg' | relative_url }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ '/assets/css/site.css' | relative_url }}">
+</head>
+<body>
+<a class="skip-link" href="#main">{{ ui.skip }}</a>
+<header class="site-top">
+  <div class="wrap site-top-row">
+    <a class="brand" href="{{ site.data.nav[pl].home | relative_url }}">
+      <svg class="brand-mark" viewBox="0 0 32 20" aria-hidden="true"><rect x="1" y="1" width="30" height="18" rx="9"/><circle cx="21" cy="10" r="6"/></svg>
+      <span class="brand-name">recipe-switch</span>
+    </a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="{{ site.data.nav[pl]['getting-started'] | relative_url }}">{{ ui.docs }}</a>
+      <a href="https://github.com/NB-Corp/recipe-switch">{{ ui.github }}</a>
+      {% if alt_url -%}
+      <a class="lang-pill" href="{{ alt_url | relative_url }}" lang="{{ other_lang }}">{{ ui.lang_switch }}</a>
+      {% endif -%}
+    </nav>
+  </div>
+</header>
+<main id="main">
+{{ content }}
+</main>
+<footer class="site-foot">
+  <div class="wrap foot-grid">
+    <div class="foot-brand">
+      <span class="brand-name">recipe-switch</span>
+      <p class="foot-line">{{ ui.footer_line }}</p>
+    </div>
+    <div class="foot-col">
+      <h2>{{ ui.footer_docs }}</h2>
+      <a href="{{ site.data.nav[pl]['getting-started'] | relative_url }}">{{ ui.nav_getting_started }}</a>
+      <a href="{{ site.data.nav[pl].harnesses | relative_url }}">{{ ui.nav_harnesses }}</a>
+      <a href="{{ site.data.nav[pl].safety | relative_url }}">{{ ui.nav_safety }}</a>
+      <a href="{{ site.data.nav[pl].recipes | relative_url }}">{{ ui.nav_recipes }}</a>
+      <a href="{{ site.data.nav[pl].faq | relative_url }}">FAQ</a>
+    </div>
+    <div class="foot-col">
+      <h2>{{ ui.footer_project }}</h2>
+      <a href="https://github.com/NB-Corp/recipe-switch">{{ ui.repo }}</a>
+      <a href="https://github.com/NB-Corp/recipe-switch/issues">{{ ui.issues }}</a>
+      <a href="https://github.com/NB-Corp/gpt-with-taste">{{ ui.recipe_source }}</a>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

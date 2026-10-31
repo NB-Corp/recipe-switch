@@ -1,71 +1,221 @@
 ---
-title: "recipe-switch 中文文档 — 一键切换 AI 编程工具的整套工作方式"
+layout: default
+page_id: home
+title: "一键切换 AI 编程工具的整套工作方式"
 description: "在 Codex、Claude Code、Kiki、Pi、DeepSeek Harness、OMP、Grok、OpenCode、Kimi Code、Hermes 与 OpenClaw 之间一键安装、切换、定制和回滚行为配方（主提示词、子代理指令与每轮提醒），支持 Diff 预览与逐字节还原。"
 ---
+{% assign shots = site.data.screenshots %}
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <p class="hero-kicker">recipe-switch · Node.js ≥ 22 · 零依赖</p>
+      <h1>一键切换 AI 编程工具的整套工作方式</h1>
+      <p class="hero-sub">主提示词、子代理分工与每轮纠偏提醒，先看 diff 再落盘，随时逐字节还原。</p>
+      <p class="hero-cmd"><code>node scripts/demo.mjs --reset</code><span class="cmd-alt"># 沙盒试玩 · 不碰真实配置</span></p>
+      <div class="hero-actions">
+        <a class="btn btn-signal" href="{{ site.data.nav.zh['getting-started'] | relative_url }}">快速开始</a>
+        <a class="btn" href="https://github.com/NB-Corp/recipe-switch">GitHub 仓库</a>
+      </div>
+    </div>
+    <figure class="shot-frame">
+      <img src="{{ shots.hero.zh | relative_url }}" alt="{{ shots.hero.alt_zh }}" loading="eager">
+      <figcaption>只监听 127.0.0.1 的竖屏面板——每款工具一张卡片。</figcaption>
+    </figure>
+  </div>
+</section>
 
-# recipe-switch
+<section class="wall">
+  <div class="wrap">
+    <p class="wall-label">一份配方 · 十一款编程工具</p>
+    <div class="badges">
+      <span class="badge"><i></i>OpenAI Codex</span>
+      <span class="badge steer"><i></i>Claude Code</span>
+      <span class="badge steer"><i></i>Kiki</span>
+      <span class="badge steer"><i></i>Pi</span>
+      <span class="badge steer"><i></i>DeepSeek Harness</span>
+      <span class="badge steer"><i></i>Oh My Pi</span>
+      <span class="badge"><i></i>Grok Build</span>
+      <span class="badge"><i></i>OpenCode</span>
+      <span class="badge steer"><i></i>Kimi Code</span>
+      <span class="badge steer"><i></i>Hermes Agent</span>
+      <span class="badge steer"><i></i>OpenClaw</span>
+      <span class="badge dim"><i></i>Gemini CLI · 待接入</span>
+      <span class="badge dim"><i></i>Cursor · 待接入</span>
+      <span class="badge dim"><i></i>Qoder · 待接入</span>
+    </div>
+  </div>
+</section>
 
-**一键切换 AI 编程工具的整套工作方式。**  
-*主提示词、子代理分工与每轮纠偏提醒，先看 diff 再落盘，随时逐字节还原。*
+<section class="section">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="section-kicker">安全模型</p>
+      <h2 class="section-title">每次写入都能检查，手改内容绝不丢失</h2>
+      <p class="section-sub">recipe-switch 通过改写配置文件来切换十一款工具的行为，四条保证让这件事变得很无聊。</p>
+    </div>
+    <div class="features">
+      <div class="feature">
+        <div class="feat-icon"><svg viewBox="0 0 20 20"><path d="M3 4.5h14M3 9.5h14M3 14.5h8"/><path class="sig" d="M13 16.5l2 2 3.5-4"/></svg></div>
+        <h3>先看 diff 再落盘</h3>
+        <p>所有命令默认预览模式，打印精确的 unified diff，敏感凭据自动脱敏。只有加 <code>--yes</code> 或点击<b>确认写入</b>才动磁盘——过期预览会直接中止写入。</p>
+      </div>
+      <div class="feature">
+        <div class="feat-icon"><svg viewBox="0 0 20 20"><path d="M10 3l6 2.5v4c0 4-2.7 6.5-6 7.5-3.3-1-6-3.5-6-7.5v-4z"/><path class="sig" d="M7 10l2 2 4-4.5"/></svg></div>
+        <h3>手改不覆盖</h3>
+        <p>受管文件与配置行带标记和指纹。你手动改过，下一次切换就会停下拦截，而不是悄悄冲掉你的劳动。坚持覆盖也会先把你手改的版本完整备份。</p>
+      </div>
+      <div class="feature">
+        <div class="feat-icon"><svg viewBox="0 0 20 20"><path d="M4 10a6 6 0 1 1 1.8 4.3M4 16.5v-3.7h3.7"/></svg></div>
+        <h3>逐字节还原</h3>
+        <p>撤回上一步、撤销全部操作栈、或恢复到装之前的基线。原始字节精确回归——空白、注释与 JSON 跨度原样奉还。</p>
+      </div>
+      <div class="feature">
+        <div class="feat-icon"><svg viewBox="0 0 20 20"><rect x="4" y="8" width="12" height="8" rx="2"/><path class="sig" d="M7 8V6a3 3 0 0 1 6 0v2"/></svg></div>
+        <h3>原始备份按安装周期计</h3>
+        <p>从未安装状态装上时拍一次快照，周期内不覆盖；按钮旁直接显示快照日期，备份目录只有你能读。卸载即退役，没人引用的内容立即释放。</p>
+      </div>
+    </div>
+  </div>
+</section>
+<section class="section">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="section-kicker">带选项的配方</p>
+      <h2 class="section-title">一份配方，复选框变体</h2>
+      <p class="section-sub">一份配方打包最多六个协同文本——主代理、子代理、独立代理提示词，加上用户、子代理与结果每轮提醒。复选框选项可以按需包含或修补章节，diff 随你拨动开关实时重算。</p>
+    </div>
+    <div class="opts-demo">
+      <div class="opts">
+        <div class="opt">
+          <span class="opt-name">安全审查</span>
+          <span class="opt-desc">在 Tone 章节前插入一份安全检查清单。</span>
+          <span class="switch on" aria-hidden="true"><span></span></span>
+        </div>
+        <div class="opt">
+          <span class="opt-name">引用行号</span>
+          <span class="opt-desc">每轮提醒代理为结论标注 file:line。</span>
+          <span class="switch on" aria-hidden="true"><span></span></span>
+        </div>
+        <div class="opt">
+          <span class="opt-name">简洁回复</span>
+          <span class="opt-desc">从最终答复中删掉进度叙述。</span>
+          <span class="switch" aria-hidden="true"><span></span></span>
+        </div>
+      </div>
+      <figure class="shot-frame">
+        <img src="{{ shots.options.zh | relative_url }}" alt="{{ shots.options.alt_zh }}" loading="lazy">
+        <figcaption>拨动选项——unified diff 实时更新。</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
 
-[English](../index.md) · **简体中文** · [安装与快速开始](getting-started.md) · [各工具说明](harnesses.md) · [安全与回滚](safety.md) · [配方与选项格式](recipes.md) · [常见问题 FAQ](faq.md) · [GitHub](https://github.com/NB-Corp/recipe-switch)
+<section class="section">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="section-kicker">定位</p>
+      <h2 class="section-title">cc-switch 之上的一层</h2>
+    </div>
+    <div class="compare">
+      <div>
+        <h3>cc-switch</h3>
+        <p>为你的编程代理切换 API 供应商与模型——决定哪颗大脑来回答。</p>
+      </div>
+      <div class="cmp-vs">对比</div>
+      <div class="cmp-here">
+        <h3>recipe-switch</h3>
+        <p>切换模型之上的行为层——决定这些代理怎么思考、拆解任务与保持方向。</p>
+      </div>
+    </div>
+  </div>
+</section>
+<section class="section">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="section-kicker">FAQ</p>
+      <h2 class="section-title">快速答疑</h2>
+    </div>
+    <div class="faq-list">
+      <details class="faq-item">
+        <summary>会动我的 API Key、模型或 MCP 配置吗？</summary>
+        <div class="faq-body"><p>不会。recipe-switch 只写提示词文件和挂载它们所需的最小配置键。模型选择、凭据、provider、MCP 与角色定义一概不碰——diff 里任何像密钥的内容都会自动脱敏。</p></div>
+      </details>
+      <details class="faq-item">
+        <summary>我手动改了受管文件会怎样？</summary>
+        <div class="faq-body"><p>工具卡片会标为<b>有手改</b>，下一次切换、撤回或还原都会停下拦截，而不是覆盖你的劳动。显式确认覆盖时，会先把你手改的版本完整备份并给出路径。</p></div>
+      </details>
+      <details class="faq-item">
+        <summary>怎么回到安装之前的样子？</summary>
+        <div class="faq-body"><p>三种粒度：<code>rollback</code> 撤回一步，<code>uninstall</code> 撤销全部，<code>restore-original</code> 恢复到当前安装周期开始时拍下的原始快照。</p></div>
+      </details>
+      <details class="faq-item">
+        <summary>支持哪些工具？</summary>
+        <div class="faq-body"><p>十一款：Codex、Claude Code、Kiki、Pi、DeepSeek Harness、Oh My Pi、Grok Build、OpenCode、Kimi Code、Hermes 与 OpenClaw。Gemini CLI、Cursor、Qoder 会被检测但保持不动，直到确认安全的写入入口。</p></div>
+      </details>
+    </div>
+  </div>
+</section>
 
----
+<section class="section">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="section-kicker">文档</p>
+      <h2 class="section-title">深入阅读</h2>
+    </div>
+    <div class="doc-cards">
+      <a class="doc-card" href="{{ site.data.nav.zh['getting-started'] | relative_url }}"><b>安装与快速开始</b><span>两分钟跑通沙盒演示、CLI 预览与本地 Web 面板。</span><span class="go">阅读 →</span></a>
+      <a class="doc-card" href="{{ site.data.nav.zh.harnesses | relative_url }}"><b>各工具写入点</b><span>11 款工具的具体写入文件、配置键与 hook 路径。</span><span class="go">阅读 →</span></a>
+      <a class="doc-card" href="{{ site.data.nav.zh.safety | relative_url }}"><b>安全与回滚</b><span>Diff 预览、手改拦截、安装周期快照与崩溃恢复。</span><span class="go">阅读 →</span></a>
+      <a class="doc-card" href="{{ site.data.nav.zh.recipes | relative_url }}"><b>配方与选项格式</b><span>编写 recipe.toml，定义复选框选项与章节修补。</span><span class="go">阅读 →</span></a>
+      <a class="doc-card" href="{{ site.data.nav.zh.faq | relative_url }}"><b>常见问题</b><span>Claude Code、Codex、Kimi Code、Hermes、OpenClaw 常见疑问。</span><span class="go">阅读 →</span></a>
+      <a class="doc-card" href="https://github.com/NB-Corp/recipe-switch"><b>GitHub 仓库</b><span>源码、议题与 MIT 许可证。</span><span class="go">打开 →</span></a>
+    </div>
+  </div>
+</section>
 
-## recipe-switch 是什么？
+<section class="section">
+  <div class="wrap">
+    <div class="cta">
+      <h2>先用一次性沙盒试玩</h2>
+      <p>演示脚本会在 .tmp/demo/ 下造一套假工具目录并打开面板。随便装、随便换、故意搞坏——你的真实配置完全不参与。</p>
+      <code>git clone https://github.com/NB-Corp/recipe-switch.git && cd recipe-switch && node scripts/demo.mjs --reset</code>
+      <div class="hero-actions">
+        <a class="btn btn-signal" href="{{ site.data.nav.zh['getting-started'] | relative_url }}">完整快速开始</a>
+        <a class="btn" href="https://github.com/NB-Corp/recipe-switch">去 GitHub 标星</a>
+      </div>
+    </div>
+  </div>
+</section>
 
-如果你用过 `cc-switch` 来给不同的 AI 编程工具切换底层模型和 API 供应商（provider），那么 **recipe-switch** 切的就是模型之上的行为层：**让你的 AI 编程工具换一套思考、拆解任务、调度子代理和保持方向的工作方式。**
-
-平时想改编程工具的行为，往往得去十几个工具各自的目录里翻找不同的配置文件和插件机制：Codex 改 `config.toml`，Claude Code 传启动参数和 hook 插件，Kimi Code 改 `SYSTEM.md` 和插件表，Pi 装扩展，DeepSeek Harness 挂 Cordis bundle。更重要的是，一套真正好用的工作方式从来不只是一段孤立的系统提示词，它包含最多**六个协同配合的文本槽位**：
-
-1. **主代理提示词（Main）** — 主交互会话的系统指令。
-2. **子代理提示词（Sub）** — 派发出去的子代理（subagent）系统指令。
-3. **独立代理提示词（Independent）** — 独立执行完整任务时的系统指令。
-4. **用户回合提醒（User Steer）** — 用户每轮发消息时附带的短提醒（steering）。
-5. **子代理回合提醒（Sub Steer）** — 子代理每轮执行时附带的短提醒。
-6. **结果回合提醒（Agent / Result Steer）** — 子代理或后台任务返回结果时的短提醒。
-
-我们把这六个槽位及可选的复选框开关打包在一起，称为一份**配方（Recipe）**。
-
-**recipe-switch** 是一个零 npm 依赖的 Node.js（≥ 22）命令行工具与本地竖屏 Web 小面板（仅监听 `127.0.0.1`），支持在 **11 款 AI 编程工具（harness）** 上一键安装、切换、勾选定制和回滚配方。
-
-![工具总览](../screenshots/01-overview.png)
-
----
-
-## 核心安全承诺
-
-- **写入前必看 Diff 预览。** 所有改写磁盘的命令默认都是预览模式（dry run），清晰列出每个文件的增删行。只有加上 `--yes` 或在 Web 面板点击**"确认写入"**才会落盘。
-- **手改检测，绝不静默覆盖。** 托管的文件与配置行带有 `managed by recipe-switch` 标记和指纹校验。只要你手动改过受管文件，切换、撤回或还原都会立刻停下并提示你；确认强制覆盖时，会先把你的手改版本完整备份下来。
-- **逐字节回滚、卸载与原始备份恢复。** 支持撤回上一步（`rollback`）、卸载并还原所有配置跨度（`uninstall`），以及查看和恢复首次安装前的原始状态备份（`originals` / `restore-original`，UI 中的**"原始备份 / 恢复到装之前"**）。
-- **绝不触碰模型、认证与无关权限。** 不改模型选择、API Key、provider、MCP 或角色定义。默认不改任何权限（OpenClaw 的对话访问权限仅在你在 UI 主动勾选授权后才会写入，且卸载时自动还原）。
-
----
-
-## 支持的工具一览
-
-| 工具 | ID | 接入方式 | 每轮提醒（Steering） |
-| --- | --- | --- | --- |
-| **OpenAI Codex** | `codex` | `config.toml` 的 `model_instructions_file` → `prompts/recipe-switch/{main,sub}.md` | 由 `gpt-with-taste` 自身的 `--hooks` 插件提供 |
-| **Claude Code** | `claude` | `recipe-switch/main.md` + `recipe-switch/plugin/`，输出启动命令（不改 `settings.json`） | 通过随附插件 hooks 注入用户、子代理与结果提醒 |
-| **Kiki** | `kiki` | 展开后的配方包 + `config.toml` 中指定模型的 `recipe = "<package>"` | Kiki 原生 Recipe steering |
-| **Pi** | `pi` | 内置扩展 `extensions/recipe-switch/` + 自动热读的 `recipe.json` | 用户、子代理与已完成结果提醒 |
-| **DeepSeek Harness** | `dsh` | 每个 profile 下的内置 Cordis bundle `dsh-recipe-switch` | `agent/pre-step` 注入用户、协调器与子代理汇报提醒 |
-| **Oh My Pi (OMP)** | `omp` | 扩展目录 `extensions/recipe-switch/`（`gpt-with-taste` OMP 适配器） | 通过适配器注入用户、子代理与任务提醒 |
-| **Grok Build** | `grok` | 全局规则文件 `rules/recipe-switch.md` | 无（Grok hooks 无法追加模型上下文） |
-| **OpenCode** | `opencode` | `recipe-switch/main.md` 加入 `opencode.json` 的 `instructions` 数组 | 暂未接入 |
-| **Kimi Code CLI** | `kimi-code` | 带标记的 `SYSTEM.md`（保留 `${base_prompt}` + Main）+ `UserPromptSubmit` 插件 | 用户回合重读并注入用户提醒 |
-| **Hermes Agent** | `hermes` | `plugins/recipe-switch/`（`llm_request` 中间件 + `pre_llm_call` 钩子） | 主会话用户提醒 + 委派子代理提醒 |
-| **OpenClaw** | `openclaw` | `extensions/recipe-switch/`（`before_prompt_build` 插件）+ 严格 JSON 配置启用 | 常规会话 Main/用户提醒，子代理会话 Sub/子代理提醒 |
-
-*(Gemini CLI、Cursor 和 Qoder 会被检测并列在"暂不支持"中，原因详见[各工具说明](harnesses.md#尚未覆盖的工具)。)*
-
----
-
-## 文档导航
-
-- **[安装与快速开始](getting-started.md)** — 运行零风险的 `.tmp/demo` 沙盒演示、CLI 预览安装与本地 Web 面板使用指南。
-- **[各工具写入点与限制说明](harnesses.md)** — 11 款工具的具体写入文件、配置键、环境变量覆盖与运行机制。
-- **[安全模型、备份与回滚](safety.md)** — Diff 预览、敏感字段脱敏、手改指纹检测、事务恢复与"原始备份 / 恢复到装之前"详解。
-- **[配方与选项格式（`recipe.toml`）](recipes.md)** — 如何接入自定义配方源、编写 `recipe.toml`，以及使用 `when`/`unless`、`prepend`/`append` 和 Markdown 章节修补选项。
-- **[常见问题（FAQ）](faq.md)** — 关于修改 Claude Code、Codex、Kimi Code、Pi、Hermes、OpenClaw 提示词及回滚恢复的常见疑问解答。
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "recipe-switch",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Windows, macOS, Linux",
+  "description": "一键切换 AI 编程工具的整套工作方式。在 11 款 AI 编程工具之间安装、切换、定制和回滚主提示词、子代理指令与每轮提醒，支持 Diff 预览与逐字节还原。",
+  "url": "https://nb-corp.github.io/recipe-switch/zh/",
+  "downloadUrl": "https://github.com/NB-Corp/recipe-switch",
+  "softwareRequirements": "Node.js >= 22",
+  "license": "https://opensource.org/licenses/MIT",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "author": { "@type": "Organization", "name": "NB-Corp", "url": "https://github.com/NB-Corp" }
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    { "@type": "Question", "name": "recipe-switch 会动我的 API Key、模型或 MCP 配置吗？",
+      "acceptedAnswer": { "@type": "Answer", "text": "不会。recipe-switch 只写提示词文件和挂载它们所需的最小配置键。模型选择、凭据、provider、MCP 与角色定义一概不碰，diff 中任何像密钥的内容都会自动脱敏。" } },
+    { "@type": "Question", "name": "手动改了受管文件会怎样？",
+      "acceptedAnswer": { "@type": "Answer", "text": "工具会被标为有手改，下一次切换、撤回或还原都会停下拦截，而不是覆盖你的劳动。显式确认覆盖时会先备份你手改的版本并给出路径。" } },
+    { "@type": "Question", "name": "怎么恢复到安装 recipe-switch 之前的状态？",
+      "acceptedAnswer": { "@type": "Answer", "text": "rollback 撤回一步，uninstall 撤销全部操作栈，restore-original 恢复到当前安装周期开始时拍下的原始快照。" } },
+    { "@type": "Question", "name": "recipe-switch 支持哪些 AI 编程工具？",
+      "acceptedAnswer": { "@type": "Answer", "text": "十一款：OpenAI Codex、Claude Code、Kiki、Pi、DeepSeek Harness、Oh My Pi、Grok Build、OpenCode、Kimi Code、Hermes Agent 与 OpenClaw。Gemini CLI、Cursor、Qoder 会被检测但保持不动。" } }
+  ]
+}
+</script>

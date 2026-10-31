@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {sandbox, tree, install, undo, GWT, KIKI_RECIPES, exists, joinText} from './helpers.mjs';
+import {sandbox, tree, install, undo, GWT, KIKI_RECIPES, exists, joinText, textOf} from './helpers.mjs';
 import {loadSource} from '../src/sources.mjs';
 
 const GWT_KEY = 'gpt-with-taste@0.1.0';
@@ -143,5 +143,5 @@ test('overview lists every driver target and the uncovered harnesses with reason
   assert.deepEqual([...new Set(view.targets.map(r => r.harness))], ['codex', 'claude', 'kiki', 'pi', 'dsh', 'omp', 'grok', 'opencode', 'kimi-code', 'hermes', 'openclaw']);
   assert.deepEqual(view.uncovered.map(item => item.id), ['gemini', 'cursor', 'qoder']);
   assert.deepEqual(view.targets.filter(r => r.harness === 'dsh').map(r => r.label), ['profile web', 'profile work']);
-  assert.ok(view.uncovered.every(item => item.reason.length > 30));
+  assert.ok(view.uncovered.every(item => textOf(item.reason).length > 30));
 });

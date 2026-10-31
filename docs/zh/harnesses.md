@@ -1,14 +1,11 @@
 ---
 title: "各工具写入点与限制说明 — recipe-switch 中文文档"
 description: "详细拆解 recipe-switch 在 OpenAI Codex、Claude Code、Kiki、Pi、DeepSeek Harness、OMP、Grok Build、OpenCode、Kimi Code、Hermes Agent 与 OpenClaw 中的写入文件、配置键与运行机制。"
+layout: doc
+page_id: harnesses
+h1: 各工具写入点与限制说明
+kicker: 参考
 ---
-
-# 各工具写入点与限制说明
-
-[首页](index.md) · [快速开始](getting-started.md) · **各工具说明** · [安全与回滚](safety.md) · [配方与选项格式](recipes.md) · [常见问题 FAQ](faq.md) · [English](../harnesses.md)
-
----
-
 `recipe-switch` 针对每款 AI 编程工具（harness）原生的配置入口或插件机制做了专门适配（源码见 `src/drivers/`），绝不粗暴覆盖整个配置目录。
 
 支持的 11 款工具按实现机制分为三类：
@@ -49,8 +46,7 @@ description: "详细拆解 recipe-switch 在 OpenAI Codex、Claude Code、Kiki�
   ```
 - **每轮提醒（Steer）**：通过随附插件的 hooks 注入用户、子代理与结果提醒。后续切换配方会直接原地更新 `recipe-switch/` 下的文件，同一条启动命令或 alias 即可直接生效。
 
-![Claude Code 预览](../screenshots/19-claude-preview.png)
-![Claude Code 启动命令展示](../screenshots/20-claude-launch.png)
+
 
 ---
 
@@ -64,7 +60,6 @@ description: "详细拆解 recipe-switch 在 OpenAI Codex、Claude Code、Kiki�
 - **每轮提醒（Steer）**：完整使用 Kiki 原生 Recipe steering（涵盖 `main`、`sub`、`independent` 分支以及 `agent`、`task` 来源）。
 - **注意事项**：新绑定立即生效，空闲会话在执行 **Rebuild context** 后生效。撤回或还原时会精准恢复这些模型原本绑定的 `recipe` 值。
 
-![Kiki 模型绑定预览](../screenshots/10-kiki-preview.png)
 
 ---
 
@@ -81,7 +76,6 @@ description: "详细拆解 recipe-switch 在 OpenAI Codex、Claude Code、Kiki�
   - 在 Pi 会话内还可使用 `/recipe status`、`/recipe on`、`/recipe off`、`/recipe steer on`、`/recipe steer off`、`/recipe reset` 临时查看或开关。
 - **冲突拦截**：若 `settings.json` 或 `extensions/` 中已挂载独立的 `gpt-with-taste` Pi 扩展，会自动拦截以免双重注入。
 
-![Pi 已安装状态卡片](../screenshots/05-pi-installed-card.png)
 
 ---
 
@@ -95,7 +89,6 @@ description: "详细拆解 recipe-switch 在 OpenAI Codex、Claude Code、Kiki�
 - **每轮提醒与热切换**：注册 `recipe-switch:behavior` 系统提示词段落，并在 `agent/pre-step` 阶段注入用户、协调器与子代理汇报提醒。切换配方只重写 `recipe.json`，每个 step 前自动重读（首次安装需新开 DSH 进程）。
 - **冲突拦截**：若该 profile 已挂载 `dsh-gpt-with-taste` 则拦截；若挂载了 `dsh-kiki-recipe` 则给出非阻塞提示。
 
-![DeepSeek Harness 预览](../screenshots/11-dsh-preview.png)
 
 ---
 
@@ -149,13 +142,14 @@ description: "详细拆解 recipe-switch 在 OpenAI Codex、Claude Code、Kiki�
 - **写入内容**：
   - `plugins/recipe-switch/{plugin.yaml,__init__.py,recipe.json}`。
   - 在 `config.yaml` 的 `plugins.enabled` 块级列表中加入 `recipe-switch`。
-- **Python AST 源码能力解析（绝不执行宿主代码）**：
-  - 安装前，`recipe-switch` 会用 Python（`python` 或 `py -3`）对宿主源码（`hermes_cli/plugins.py`、`run_agent.py` 及 `agent/` 下的相关文件）做 AST 解析，**绝不导入或执行宿主代码**。
-  - **必须同时确认两件事**：
-    1. `PluginContext`（包括同模块内继承的父类）真的定义了 `register_middleware` 方法；
-    2. 请求路径（`run_agent.py` 以及 `agent/` 下的相关文件）里确实会调度 `llm_request`。
-  - **两项同时满足时**：同时注册 `llm_request` 中间件与 `pre_llm_call` 钩子。`llm_request` 会将完整的主/子代理系统提示词追加到 `chat_completions`（`system`/`developer` 消息）、`anthropic_messages`（`system` 块）、`codex_responses`（`instructions`）和 `bedrock_converse`（`system` 块，并保持末尾 `cachePoint` 仍在最后以覆盖新增文本）。每个 `session_id` 在首次请求时冻结角色与系统提示词文本，因此切换配方只对新会话生效，不会破坏进行中会话的提示词字节与缓存。
-  - **本机没有 Python、AST 解析失败，或两件事缺任何一件时**：自动从 `plugin.yaml` 移除 `provides_middleware`，**只安装每轮提醒（`pre_llm_call` steering）**。主/子代理系统提示要等 Hermes 升级后才生效，具体的降级原因会直接显示在总览（`status`）、UI 和预览里。
+- **静态能力检查（绝不执行宿主代码）**：
+  - 安装前，使用 Python（`python` 或 `py -3`）对 `hermes_cli/plugins.py` 做 AST 解析，**绝不导入或执行宿主代码**。`PluginContext` 必须直接定义未被装饰的 `register_middleware` 方法，且不能被类属性或实例属性同名赋值遮蔽。满足静态条件不代表已在运行时生效。
+  - **满足静态条件时**：同时注册 `llm_request` 中间件与 `pre_llm_call` 钩子。`llm_request` 会将完整的主/子代理系统提示词追加到 `chat_completions`（`system`/`developer` 消息）、`anthropic_messages`（`system` 块）、`codex_responses`（`instructions`）和 `bedrock_converse`（`system` 块，并保持末尾 `cachePoint` 仍在最后以覆盖新增文本）。每个 `session_id` 在首次请求时冻结角色与系统提示词文本，因此切换配方只对新会话生效，不会破坏进行中会话的提示词字节与缓存。
+  - **不满足静态条件时**（Python 不可用、解析失败或静态信号缺失）：从 `plugin.yaml` 移除 `provides_middleware`，只安装每轮提醒。界面显示**主/子代理不可用**（`unsupported`）。先在 `status` 或预览中查看原因，按需配置 Python 或升级 Hermes，再重新安装。
+- **运行时能力由插件自报**：满足静态条件的宿主，再按运行时证据显示其余三态之一：
+  1. **已确认生效**（`confirmed`）：中间件已经接到真实请求；
+  2. **已注册，尚未见到请求**（`registered`）：已经回报中间件注册成功，但尚无 `llm_request` 经过；
+  3. **未知：请启动一次 Hermes**（`unknown`）：尚无有效的运行时回报，启动 Hermes 让插件回报。
 - **已知旁路与限制**：
   - Hermes 内部的 `codex_app_server`、辅助调用（auxiliary calls）与最大轮次总结（max-iteration summary）不经过 `llm_request` 中间件。
   - `SOUL.md` 与 `AGENTS.md` 保持原样不改。

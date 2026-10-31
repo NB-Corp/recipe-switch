@@ -17,9 +17,9 @@ export const DRIVERS = [native.codex, native.claude, native.kiki, builtin.pi, bu
 
 /** Harnesses detected or requested that the loader deliberately does not write. */
 export const UNCOVERED = [
-  {id: 'gemini', name: 'Gemini CLI', home: '~/.gemini', reason: 'No native source checkout to confirm the global instruction slot or extension contract; only project-level GEMINI.md is documented by donors.'},
-  {id: 'cursor', name: 'Cursor', home: '~/.cursor', reason: 'User rules live in the app settings database; file rules are project-scoped (.cursor/rules). No confirmed global file target.'},
-  {id: 'qoder', name: 'Qoder', home: '~/.qoder', reason: 'Plugin manifest and hook route are known from Ponytail but no Qoder source or adapter exists here yet.'},
+  {id: 'gemini', name: 'Gemini CLI', home: '~/.gemini', reason: note('uncovered.gemini')},
+  {id: 'cursor', name: 'Cursor', home: '~/.cursor', reason: note('uncovered.cursor')},
+  {id: 'qoder', name: 'Qoder', home: '~/.qoder', reason: note('uncovered.qoder')},
 ];
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -98,7 +98,8 @@ export class Service {
       const resolved = item.home.replace(/^~/, process.env.USERPROFILE || process.env.HOME || '').split(' ')[0];
       uncovered.push({...item, detected: await exists(resolved)});
     }
-    return {stateHome: toPosix(this.store.home), targets: rows, uncovered, warnings: this.store.warnings};
+    return {stateHome: toPosix(this.store.home), displayHome: this.env.RECIPE_SWITCH_USER_HOME ? toPosix(path.resolve(this.env.RECIPE_SWITCH_USER_HOME)) : null,
+      targets: rows, uncovered, warnings: this.store.warnings};
   }
 
   async resolveTarget(harness, home) {

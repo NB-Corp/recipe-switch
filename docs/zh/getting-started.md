@@ -1,14 +1,11 @@
 ---
 title: "安装与快速开始 — recipe-switch 中文文档"
 description: "两分钟上手 recipe-switch：在隔离沙盒中试玩 Web 面板，检测本机 AI 编程工具，预览 Diff、安装切换配方，以及一键回滚还原。"
+layout: doc
+page_id: getting-started
+h1: 安装与快速开始
+kicker: 指南
 ---
-
-# 安装与快速开始
-
-[首页](index.md) · **快速开始** · [各工具说明](harnesses.md) · [安全与回滚](safety.md) · [配方与选项格式](recipes.md) · [常见问题 FAQ](faq.md) · [English](../getting-started.md)
-
----
-
 ## 环境要求
 
 - **Node.js ≥ 22**（纯原生 ES Module 实现，**零 npm 依赖**，无需 `npm install` 第三方包）。
@@ -49,7 +46,7 @@ node scripts/demo.mjs --reset
 - `--port <N>` — 指定监听端口（默认 `4517`）。
 - `--no-open` — 仅启动本地服务，不自动打开浏览器。
 
-![选择配方弹窗](../screenshots/02-picker.png)
+![本地面板中的工具总览]({{ '/screenshots/ui-01-home.png' | relative_url }})
 
 ---
 
@@ -87,7 +84,7 @@ node bin/recipe-switch.mjs install pi gpt-with-taste@0.1.0
 node bin/recipe-switch.mjs install pi gpt-with-taste@0.1.0 --yes
 ```
 
-![UI 中的 Diff 预览](../screenshots/03-diff-preview.png)
+![UI 中的 Diff 预览]({{ '/screenshots/ui-07-install-preview.png' | relative_url }})
 
 ### 传入配方选项与工具专属设置
 
@@ -120,7 +117,7 @@ node bin/recipe-switch.mjs ui
 - **「来源」页**：增删本地配方目录或 `recipe.toml` 路径，修改 `gpt-with-taste` 仓库位置。
 - **中英切换与内置向导**：点击右上角 `EN` / `中` 切换界面语言，点击 `?` 查看 5 步交互说明。
 
-![配方文本查看器](../screenshots/16-viewer.png)
+![配方来源]({{ '/screenshots/ui-18-sources.png' | relative_url }})
 
 ---
 
@@ -141,4 +138,5 @@ node bin/recipe-switch.mjs originals pi
 node bin/recipe-switch.mjs restore-original pi --yes
 ```
 
-下一步：阅读[各工具说明](harnesses.md)，了解每款工具具体读写了哪些文件与配置项。
+下一步：阅读[各工具说明]({{ '/zh/harnesses.html' | relative_url }})，了解每款工具具体读写了哪些文件与配置项。
+{: .doc-next}

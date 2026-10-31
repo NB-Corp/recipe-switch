@@ -102,7 +102,7 @@ export async function main(argv = process.argv.slice(2), service = new Service()
       for (const item of row.managed?.drift ?? []) console.log(`  hand edit: ${item.path} (${item.state})`);
     }
     console.log('\nNot covered:');
-    for (const item of view.uncovered) console.log(`  ${item.name}${item.detected ? ' (detected)' : ''}: ${item.reason}`);
+    for (const item of view.uncovered) console.log(`  ${item.name}${item.detected ? ' (detected)' : ''}: ${textOf(item.reason, lang)}`);
     return;
   }
   if (command === 'recipes') {

@@ -334,7 +334,25 @@ const STRINGS = {
   },
 };
 let lang = localStorage.getItem('rs.lang') ?? (navigator.language?.startsWith('zh') ? 'zh' : 'en');
-const t = (key, ...args) => { const value = STRINGS[lang][key] ?? STRINGS.en[key] ?? key; return typeof value === 'function' ? value(...args) : value; };
+const SHARED_UI = {
+  originalsTitle: 'originals.title', restoreOriginal: 'originals.restore', viewOriginal: 'originals.view',
+  originallyAbsent: 'originals.absent', originalPrivate: 'originals.private', originalBinary: 'originals.binary',
+  originalRestoreHint: 'originals.restoreHint', reconstructedWarn: 'originals.reconstructedWarn',
+  noChange: 'originals.alreadyOriginal', alreadyOriginal: 'originals.alreadyOriginal',
+  originalCycleEnded: 'originals.cycleEnded', reconstructed: 'originals.reconstructed',
+  confirmReconstructed: 'originals.confirmReconstructed',
+};
+const t = (key, ...args) => {
+  if (SHARED_UI[key]) return msg({id: SHARED_UI[key]});
+  const value = STRINGS[lang][key] ?? STRINGS.en[key] ?? key;
+  return typeof value === 'function' ? value(...args) : value;
+};
+// Localize only exact metadata strings shipped with our sample recipes.
+// Custom recipe names and descriptions remain authored content.
+function sampleText(value) {
+  const match = Object.entries(globalThis.RECIPE_SWITCH_MESSAGES ?? {}).find(([id, entry]) => id.startsWith('sample.') && entry.en === value);
+  return match ? msg({id: match[0]}) : value;
+}
 function applyStatic() {
   document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
   for (const node of document.querySelectorAll('[data-i18n]')) node.textContent = t(node.dataset.i18n);
@@ -377,7 +395,10 @@ function fmtTime(iso) {
 }
 /** Home-relative, middle-ellipsized display path. */
 function displayPath(p, max = 46) {
-  let s = String(p ?? '').replace(/^[A-Za-z]:\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
+  let s = String(p ?? '').replaceAll('\\', '/');
+  const root = state.overview?.displayHome;
+  if (root && (s === root || s.startsWith(root + '/'))) s = '~' + s.slice(root.length);
+  s = s.replace(/^[A-Za-z]:\/Users\/[^/]+/, '~').replace(/^\/home\/[^/]+/, '~');
   if (s.length > max) { const head = Math.ceil((max - 1) / 2), tail = Math.floor((max - 1) / 2); s = s.slice(0, head) + '…' + s.slice(s.length - tail); }
   return s;
 }
@@ -459,7 +480,7 @@ function optionSummary(recipeView, values) {
   const options = recipeView?.options ?? [];
   if (!options.length) return null;
   const on = options.filter(option => values?.[option.id] ?? option.default);
-  return on.length === options.length ? null : options.map(option => `${(values?.[option.id] ?? option.default) ? '+' : '−'}${option.name}`).join(' ');
+  return on.length === options.length ? null : options.map(option => `${(values?.[option.id] ?? option.default) ? '+' : '−'}${sampleText(option.name)}`).join(' ');
 }
 function toolRow(target) {
   const key = target.key, status = targetState(target), managed = target.managed ?? {};
@@ -501,11 +522,11 @@ function toolRow(target) {
       managed.installed ? [el('dt', {}, t('since')), el('dd', {}, fmtTime(managed.since))] : null),
     techRows.length ? el('details', {class: 'more'}, el('summary', {}, t('techDetails'), el('span', {class: 'group-note'}, `${techRows.length}`)),
       el('div', {class: 'more-body'}, el('dl', {class: 'kv'}, techRows.flatMap(([name, text, detailText]) => [el('dt', {}, name), el('dd', {}, text, detailText ? el('div', {class: 'mono tech-key'}, detailText) : null)])))) : null,
-    note('warn', t('drift'), (managed.drift ?? []).map(d => `${displayPath(d.path)} — ${d.state}`)),
+    note('warn', t('drift'), (managed.drift ?? []).map(d => `${displayPath(d.path)} — ${msg({id: `status.${d.state}`})}`)),
     note(target.managed?.installed ? 'info' : 'warn', t('warnTitle'), (target.foreign ?? []).map(f => `${msg(f.what)}: ${msg(f.detail)}`)),
     target.error ? note('bad', t('loadFailed'), [target.errorNote ? msg(target.errorNote) : target.error]) : null,
     managed.history?.length ? el('details', {}, el('summary', {class: 'group-note'}, `${t('history')} · ${managed.history.length}`),
-      el('div', {class: 'dim-list', style: 'margin-top:6px'}, managed.history.map(h => el('div', {class: 'dim'}, el('b', {}, h.kind), `${h.recipe ?? ''} · ${fmtTime(h.at)}`)))) : null,
+      el('div', {class: 'dim-list', style: 'margin-top:6px'}, managed.history.map(h => el('div', {class: 'dim'}, el('b', {}, msg({id: `action.${h.kind}`})), `${h.recipe ?? ''} · ${fmtTime(h.at)}`)))) : null,
     target.originals ? originalsBlock(target) : null,
     actions);
   row.append(detail);
@@ -529,7 +550,7 @@ function originalsBlock(target) {
       title: original.restorable === false ? msg({id: original.alreadyOriginal ? 'originals.alreadyOriginal' : 'originals.cycleEnded'}) : '',
       onclick: () => undoFlow(target, true, true)}, msg({id: 'originals.restore'})),
       el('span', {class: 'group-note'}, original.ended ? msg({id: original.alreadyOriginal ? 'originals.alreadyOriginal' : 'originals.cycleEnded'})
-        : msg({id: 'originals.date', vars: {date: original.capturedAt.slice(0, 10)}}))));
+        : msg({id: 'originals.date', vars: {date: new Date(original.capturedAt).toLocaleDateString('en-CA')}}))));
 }
 async function viewOriginal(target, file) {
   try {
@@ -564,7 +585,7 @@ function renderTools() {
   if (view.uncovered?.length) {
     host.append(el('div', {class: 'group-head'}, el('h2', {class: 'group-title'}, t('uncovered'))));
     host.append(el('p', {class: 'group-note', style: 'margin:0 4px 8px'}, t('uncoveredNote')));
-    host.append(el('div', {class: 'dim-list'}, view.uncovered.map(item => el('div', {class: 'dim'}, el('b', {}, item.name), item.reason))));
+    host.append(el('div', {class: 'dim-list'}, view.uncovered.map(item => el('div', {class: 'dim'}, el('b', {}, item.name), msg(item.reason)))));
   }
 }
 
@@ -578,7 +599,7 @@ function pickRecipe(target) {
       class: `pick-item${current?.key === recipe.key ? ' is-current' : ''}`,
       onclick: () => { close(); configure(target, recipe, current?.key === recipe.key ? {recipeOptions: current.optionValues} : {}); },
     }, el('b', {}, recipe.name), el('em', {}, `v${recipe.version}${current?.key === recipe.key ? ` · ${t('current')}` : ''}`),
-      el('span', {}, recipe.description || recipe.origin))))),
+      el('span', {}, sampleText(recipe.description) || recipe.origin))))),
     foot: sheetFoot(el('button', {class: 'btn', onclick: () => close()}, t('cancel')))});
 }
 
@@ -631,10 +652,10 @@ function recipeSwitches(recipe, values = {}) {
   const options = recipe.options ?? [];
   if (!options.length) return null;
   const list = el('div', {class: 'opts'}, options.map(option => {
-    const box = el('input', {type: 'checkbox', 'data-id': option.id, 'aria-label': option.name});
+    const box = el('input', {type: 'checkbox', 'data-id': option.id, 'aria-label': sampleText(option.name)});
     box.checked = values[option.id] ?? option.default;
-    const item = el('label', {class: 'opt'}, el('span', {class: 'opt-name'}, option.name),
-      option.description ? el('span', {class: 'opt-desc'}, option.description) : null,
+    const item = el('label', {class: 'opt'}, el('span', {class: 'opt-name'}, sampleText(option.name)),
+      option.description ? el('span', {class: 'opt-desc'}, sampleText(option.description)) : null,
       el('span', {class: 'opt-where'}, el('span', {class: 'group-note'}, option.default ? t('defaultOn') : t('defaultOff')),
         affectsChips(option.affects)),
       el('span', {class: 'switch'}, box, el('span')));
@@ -655,7 +676,7 @@ function diffNode(text) {
 }
 function fileNode(file, open) {
   const details = el('details', {class: 'file'}, el('summary', {},
-    el('span', {class: `file-act ${file.action}`}, file.action),
+    el('span', {class: `file-act ${file.action}`}, msg({id: `action.${file.action}`})),
     el('span', {class: 'file-path', title: file.path}, el('bdi', {}, displayPath(file.path))),
     el('span', {class: 'file-count'}, el('span', {class: 'a'}, `+${file.added}`), el('span', {class: 'd'}, `−${file.removed}`))),
     diffNode(file.diff));
@@ -709,8 +730,10 @@ function blockedNote(planned, onForce, target) {
 function noteItems(list) {
   const out = [];
   for (const item of list ?? []) {
-    const text = msg(item), detail = typeof item === 'object' && !item.kind ? msgDetail(item) : null;
-    out.push(detail ? el('li', {}, text, el('div', {class: 'mono tech-key'}, detail)) : el('li', {}, text));
+    const text = item.kind === 'foreign' ? `${msg(item.text)}: ${msg(item.detail)}` : msg(item);
+    const detail = item.kind === 'foreign' ? msgDetail(item.detail) : msgDetail(item);
+    out.push(detail ? el('li', {}, text, el('details', {}, el('summary', {}, t('techDetails')),
+      el('div', {class: 'mono tech-key'}, detail))) : el('li', {}, text));
   }
   return out;
 }
@@ -828,7 +851,7 @@ function showResult(title, result) {
   if (result.backup) body.push(el('div', {class: 'result-row'},
     el('span', {class: 'field-label'}, t('backupSaved')), pathRow(result.backup)));
   for (const version of result.replacedVersions ?? []) body.push(el('div', {class: 'result-row'},
-    el('span', {class: 'field-label'}, `${t('replacedAt')} ${displayPath(version.saved)}`), pathRow(version.saved)));
+    el('span', {class: 'field-label'}, t('replacedAt')), pathRow(version.saved)));
   if (result.launch) body.push(el('div', {class: 'launch'}, el('span', {class: 'field-label'}, t('launchTitle')), el('code', {}, result.launch)));
   if (result.notes?.length) body.push(el('div', {class: 'note info'}, el('b', {}, t('notesTitle')), el('ul', {}, noteItems(result.notes))));
   const {close} = openSheet({title: '', steps: null, body: sheetBody(...body), foot: sheetFoot(done)});
@@ -845,11 +868,11 @@ function renderRecipes() {
     const users = (state.overview?.targets ?? []).filter(target => target.managed?.recipe?.key === recipe.key);
     host.append(el('article', {class: 'recipe'},
       el('div', {class: 'recipe-head'}, el('h3', {class: 'recipe-name'}, recipe.name), el('span', {class: 'recipe-ver'}, `v${recipe.version}`)),
-      recipe.description ? el('p', {class: 'recipe-desc'}, recipe.description) : null,
+      recipe.description ? el('p', {class: 'recipe-desc'}, sampleText(recipe.description)) : null,
       el('div', {class: 'recipe-meta'}, el('span', {class: 'chip'}, recipe.kind === 'author-repo' ? 'author repo' : 'recipe.toml'),
         users.map(target => el('span', {class: 'chip ok'}, target.name + (target.label ? ` · ${target.label}` : '')))),
       recipe.options?.length ? el('div', {class: 'opts'}, recipe.options.map(option => el('div', {class: 'opt'},
-        el('span', {class: 'opt-name'}, option.name), option.description ? el('span', {class: 'opt-desc'}, option.description) : null,
+        el('span', {class: 'opt-name'}, sampleText(option.name)), option.description ? el('span', {class: 'opt-desc'}, sampleText(option.description)) : null,
         el('span', {class: 'opt-where'}, el('span', {class: `chip ${option.default ? 'ok' : ''}`}, option.default ? t('defaultOn') : t('defaultOff')),
           affectsChips(option.affects))))) : el('p', {class: 'group-note', style: 'margin:0'}, t('noOptions')),
       el('div', {class: 'texts'}, Object.keys(STRINGS.en.texts).map(key => el('button', {

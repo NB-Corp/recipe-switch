@@ -174,7 +174,8 @@ test('R01: CLI and both UI result languages show the retained version actual pat
       openSheet: options => { shown = options; return {close() {}}; }};
     vm.createContext(context); vm.runInContext(functionText + ';globalThis.show=showResult;', context);
     context.show('Done', {...result, message: 'Uninstalled'});
-    assert.ok(JSON.stringify(shown).includes(`${text} ${result.replacedVersions[0].saved}`));
+    assert.ok(JSON.stringify(shown).includes(text));
+    assert.ok(JSON.stringify(shown).includes(result.replacedVersions[0].saved));
   }
 });
 

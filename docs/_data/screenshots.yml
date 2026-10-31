@@ -1,0 +1,40 @@
+# Paths are relative to site baseurl. Each language uses its own UI screenshots.
+hero:
+  en: screenshots/ui-en-01-home.png
+  zh: screenshots/ui-01-home.png
+  alt_en: recipe-switch portrait panel — detected coding tools with install state
+  alt_zh: recipe-switch 竖屏面板 — 已检测到的编程工具与安装状态
+
+features:
+  diff:
+    en: screenshots/ui-en-02-install.png
+    zh: screenshots/ui-07-install-preview.png
+    alt_en: Unified diff preview before any write
+    alt_zh: 写入前的 unified diff 预览
+  drift:
+    en: screenshots/ui-en-03-blocked.png
+    zh: screenshots/ui-12-blocked.png
+    alt_en: A hand edit blocks the switch until you decide
+    alt_zh: 检测到手改后拦截切换，由你决定
+  edit:
+    en: screenshots/ui-en-03b-see-edit.png
+    zh: screenshots/ui-13-see-edit.png
+    alt_en: Inspect your changes before deciding
+    alt_zh: 先查看你的改动，再决定如何处理
+  originals:
+    en: screenshots/ui-en-16-originals.png
+    zh: screenshots/ui-16-originals.png
+    alt_en: Restore to the pre-install backup
+    alt_zh: 恢复到装之前的备份
+
+options:
+  en: screenshots/ui-en-02-install.png
+  zh: screenshots/ui-07-install-preview.png
+  alt_en: Checkbox options re-render the live diff
+  alt_zh: 复选框选项实时重算 diff
+
+overview:
+  en: screenshots/ui-en-01-home.png
+  zh: screenshots/ui-01-home.png
+  alt_en: Detected harnesses in the portrait panel
+  alt_zh: 竖屏面板中已检测到的工具

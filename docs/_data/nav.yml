@@ -1,0 +1,16 @@
+# Per-page navigation + language alternates.
+# urls are site-root-relative; prepend baseurl via relative_url.
+en:
+  home: "/"
+  getting-started: "/getting-started.html"
+  harnesses: "/harnesses.html"
+  safety: "/safety.html"
+  recipes: "/recipes.html"
+  faq: "/faq.html"
+zh:
+  home: "/zh/"
+  getting-started: "/zh/getting-started.html"
+  harnesses: "/zh/harnesses.html"
+  safety: "/zh/safety.html"
+  recipes: "/zh/recipes.html"
+  faq: "/zh/faq.html"

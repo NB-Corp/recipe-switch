@@ -1,14 +1,11 @@
 ---
 title: "Recipes & Options Format (recipe.toml) — recipe-switch"
 description: "Authoring guide for recipe-switch: connect recipe sources, structure a recipe.toml package, understand the six prompt and steering slots, and build checkbox options with when/unless, prepend/append, and Markdown section patches."
+layout: doc
+page_id: recipes
+h1: Recipes & Options Format (recipe.toml)
+kicker: Authoring
 ---
-
-# Recipes & Options Format (`recipe.toml`)
-
-[Home](index.md) · [Getting Started](getting-started.md) · [Harnesses](harnesses.md) · [Safety & Rollback](safety.md) · **Recipes & Options** · [FAQ](faq.md) · [简体中文](zh/recipes.md)
-
----
-
 ## What is a Recipe?
 
 A **recipe** is a portable working style for AI coding harnesses. Under the hood, every recipe evaluates to **six behavior text slots**:
