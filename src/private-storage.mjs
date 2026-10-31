@@ -4,6 +4,20 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
+import {AsyncLocalStorage} from 'node:async_hooks';
+const scope = new AsyncLocalStorage();
+export const privateScope = fn => scope.getStore() ? fn() : scope.run(new Map(), fn);
+// Cache only within one locked transaction. Directory entry churn is expected;
+// file metadata changes and replacement inodes invalidate the remembered result.
+const permissionKey = stat => `${stat.dev}:${stat.ino}:${stat.mode}${stat.isDirectory() ? '' : ':' + stat.ctimeNs}`;
+const remembered = (file, stat, recursive) => {
+  const saved = scope.getStore()?.get(path.resolve(file));
+  return saved?.key === permissionKey(stat) && (!recursive || saved.recursive);
+};
+export async function rememberPrivate(file, recursive = false) {
+  const stat = await fs.lstat(file, {bigint: true});
+  scope.getStore()?.set(path.resolve(file), {key: permissionKey(stat), recursive});
+}
 const execute = promisify(execFile);
 const native = name => path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', name + '.exe');
 const icacls = (args, cwd) => execute(native('icacls'), args, {cwd, windowsHide: true});
@@ -58,21 +72,25 @@ export async function privateDirectory(dir, {recursive = true} = {}) {
   try {
     await fs.mkdir(dir, {recursive: true, mode: 0o700});
     const walk = async current => {
-      const stat = await fs.lstat(current);
+      const stat = await fs.lstat(current, {bigint: true});
       if (stat.isSymbolicLink()) throw new Error(`Linked private storage refused: ${current}`);
+      if (remembered(current, stat, recursive)) return;
       if (process.platform === 'win32') await secureWindows(current, stat.isDirectory(), false);
       else await fs.chmod(current, stat.isDirectory() ? 0o700 : 0o600);
       if (recursive && stat.isDirectory()) for (const entry of await fs.readdir(current)) await walk(path.join(current, entry));
+      await rememberPrivate(current, recursive);
     };
     await walk(dir);
   } catch (error) { throw new Error(`无法保护私有存储权限，拒绝写入 / Cannot secure private storage; refusing to write: ${dir}: ${error.message}`); }
   return dir;
 }
 export async function privateFile(file) {
-  const stat = await fs.lstat(file);
+  const stat = await fs.lstat(file, {bigint: true});
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Not a regular private file: ${file}`);
+  if (remembered(file, stat, false)) return;
   if (process.platform === 'win32') await secureWindows(file, false, false);
   else await fs.chmod(file, 0o600);
+  await rememberPrivate(file);
 }
 
 /** The temp is still empty. Preserve the existing target's DACL/mode before payload. */

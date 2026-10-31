@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {note, format, messageError} from './i18n.mjs';
-import {privateDirectory, privateFile, copyPermissions} from './private-storage.mjs';
+import {privateDirectory, privateFile, copyPermissions, privateScope, rememberPrivate} from './private-storage.mjs';
 
 export const sha256 = bytes => crypto.createHash('sha256').update(bytes ?? Buffer.alloc(0)).digest('hex');
 
@@ -237,7 +237,8 @@ export async function writeFile(file, bytes, options = {}) {
         ownTemp = inodeIdentity(await handle.stat({bigint: true}));
         await onStage('temp-created', {tempIdentity: ownTemp});
         // Empty until the original target's permissions are in place (also on compensation).
-        await copyPermissions(file, temp, options);
+        if (options.privateRoot) await privateFile(temp);
+        else await copyPermissions(file, temp, options);
         await handle.writeFile(bytes);
         if (options.durable) await handle.sync();
       } finally { await handle.close(); }
@@ -270,6 +271,7 @@ export async function writeFile(file, bytes, options = {}) {
       moved = false;
     } else if (bytes === null) await fs.unlink(file).catch(error => { if (error.code !== 'ENOENT') throw error; });
     else await fs.rename(temp, file);
+    if (options.privateRoot && bytes !== null) await rememberPrivate(file);
     if (options.durable) await syncDirectory(path.dirname(file));
   } catch (error) {
     if (moved) {
@@ -332,7 +334,7 @@ export async function withLock(home, fn, name = 'transaction.lock') {
       await new Promise(resolve => setTimeout(resolve, 15));
     }
   }
-  try { if (name === 'transaction.lock') await privateDirectory(home); return await fn(); }
+  try { return await privateScope(async () => { if (name === 'transaction.lock') await privateDirectory(home); return fn(); }); }
   finally {
     const owner = JSON.parse(await fs.readFile(lock, 'utf8'));
     if (owner.token === token) await fs.unlink(lock);
