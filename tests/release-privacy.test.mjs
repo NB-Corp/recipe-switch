@@ -41,7 +41,11 @@ test('O01: pre-existing explicit broad grants are removed from all private stora
     await originalJournal(value); await assertPrivate(store.pending, b);
     assert.match(Buffer.from(value.files[0].before, 'base64').toString(), /FAKE-PRIVATE-KEY/); observed = true;
   };
-  const open = fs.open; let tempChecked = 0;
+  const open = fs.open, read = fs.readFile; let tempChecked = 0, aclTempChecked = 0;
+  fs.readFile = async (file, ...args) => {
+    if (path.basename(String(file)).startsWith('.recipe-switch-acl-')) { await assertPrivate(file, b); aclTempChecked++; }
+    return read(file, ...args);
+  };
   fs.open = async (file, ...args) => {
     const handle = await open(file, ...args);
     if (String(file).startsWith(root) && String(file).endsWith('.tmp') && args[0] === 'wx') {
@@ -51,8 +55,9 @@ test('O01: pre-existing explicit broad grants are removed from all private stora
     return handle;
   };
   try { await applyPlan(store, await plan({store, harness: 'fixture', home, recipe: {key: 'r'}, desired: [{type: 'jsonKey', path: file, pointer: ['instruction'], afterValue: 'MAIN'}]})); }
-  finally { fs.open = open; }
+  finally { fs.open = open; fs.readFile = read; }
   assert.ok(observed && tempChecked);
+  if (windows) assert.ok(aclTempChecked > 0);
   assert.match(await fs.readFile(store.file, 'utf8'), /FAKE-PRIVATE-KEY/);
   async function walk(dir) { await assertPrivate(dir, b); for (const name of await fs.readdir(dir)) { const file = path.join(dir, name); if ((await fs.stat(file)).isDirectory()) await walk(file); else await assertPrivate(file, b); } }
   await store.load(); await walk(root);

@@ -35,6 +35,10 @@ async function userSid() {
 async function savedAcl(file, fn, recursive = false) {
   const scratch = path.join(path.dirname(file), `.recipe-switch-acl-${crypto.randomUUID()}.tmp`);
   try {
+    // The ACL export contains no file payload, but its own temp is private too.
+    // A fresh empty inode has no explicit ACEs to enumerate or remove.
+    await fs.writeFile(scratch, Buffer.alloc(0), {flag: 'wx', mode: 0o600});
+    await icacls([scratch, '/inheritance:r', '/grant:r', `*${await userSid()}:F`, '/q']);
     await icacls([path.basename(file), '/save', scratch, ...(recursive ? ['/t'] : []), '/q'], path.dirname(file));
     const text = (await fs.readFile(scratch)).toString('utf16le').replace(/^\uFEFF/, '');
     return await fn(text, scratch);
