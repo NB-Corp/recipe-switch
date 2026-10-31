@@ -76,11 +76,20 @@ export async function privateFile(file) {
 }
 
 /** The temp is still empty. Preserve the existing target's DACL/mode before payload. */
-export async function copyPermissions(source, temp) {
+export async function copyPermissions(source, temp, {privateWhenMissing = false} = {}) {
   const stat = await fs.lstat(source).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
-  if (!stat) return; // New targets inherit their parent's permissions normally.
+  if (!stat) {
+    // New installs inherit normally; recovery of saved secret bytes fails closed
+    // to current-user-only when the former permission source is absent.
+    if (privateWhenMissing) await privateFile(temp);
+    return;
+  }
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Not a regular permission source: ${source}`);
-  if (process.platform !== 'win32') return fs.chmod(temp, stat.mode & 0o7777);
+  if (process.platform !== 'win32') {
+    const created = await fs.stat(temp);
+    if (created.uid !== stat.uid || created.gid !== stat.gid) await fs.chown(temp, stat.uid, stat.gid);
+    return fs.chmod(temp, stat.mode & 0o7777);
+  }
   await savedAcl(source, async text => {
     const lines = text.trimEnd().split(/\r?\n/), sddl = lines[1];
     if (lines.length !== 2 || !sddl?.startsWith('D:')) throw new Error('Invalid saved target ACL');

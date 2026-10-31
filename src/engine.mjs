@@ -135,7 +135,7 @@ async function compensate(store, journal, row) {
         delete undo.tempIdentity;
       }
       undo.phase = 'prepared'; await store.journal(journal);
-      await writeFile(row.path, before, {expected: current, boundary: row.boundary, temp: undo.temp, displaced: undo.displaced,
+      await writeFile(row.path, before, {expected: current, boundary: row.boundary, temp: undo.temp, displaced: undo.displaced, privateWhenMissing: before !== null,
         retainDisplaced: true, durable: true, warn: message => store.warn(message), onStage: async (phase, details) => {
           Object.assign(undo, details, {phase: phase === 'restored' ? 'compensation-pending' : phase}); await store.journal(journal);
         }});

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {execFileSync} from 'node:child_process';
+import {execFileSync, spawnSync} from 'node:child_process';
 import {sandbox, exists} from './helpers.mjs';
 import {Store, plan, applyPlan} from '../src/engine.mjs';
 import {writeFile} from '../src/fsx.mjs';
@@ -89,4 +89,26 @@ test('O01/R28: failed permission setup leaves the existing target intact', async
   await assert.rejects(writeFile(file, Buffer.from('NEW'), {expected: Buffer.from('SECRET'), privateRoot: file}), /private storage|ENOTDIR|EEXIST/);
   assert.equal(await fs.readFile(file, 'utf8'), 'SECRET');
   await assert.rejects(privateDirectory(file), /Cannot secure private storage/);
+});
+
+test('R28: recovery with a missing target and late-edited carrier privatizes restored secret bytes before writing', async t => {
+  const b = await sandbox(t, {sources: []}), home = b.file('absent-target'), file = path.join(home, 'main'), store = new Store(b.file('absent-state'));
+  await fs.mkdir(home); await fs.writeFile(file, 'FAKE PRIVATE ORIGINAL');
+  if (windows) run('icacls', [file, '/inheritance:r', '/grant:r', `*${sid()}:F`, '/q']); else await fs.chmod(file, 0o600);
+  const code = `import fs from 'node:fs/promises';import{Store,plan,applyPlan}from ${JSON.stringify(new URL('../src/engine.mjs', import.meta.url).href)};import{fileUnit}from ${JSON.stringify(new URL('../src/drivers/common.mjs', import.meta.url).href)};const [state,home,file]=process.argv.slice(1),s=new Store(state),p=await plan({store:s,harness:'fixture',home,recipe:{key:'r'},force:true,desired:[fileUnit(file,'NEW')]});const rename=fs.rename;fs.rename=async(f,t)=>{await rename(f,t);if(f===file)process.exit(0);};await applyPlan(s,p);`;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', code, store.home, home, file], {env: b.env, encoding: 'utf8'});
+  assert.equal(child.status, 0, child.stderr); assert.equal(await exists(file), false);
+  const journal = JSON.parse(await fs.readFile(store.pending)); await fs.writeFile(journal.files[0].displaced, 'LATE CARRIER');
+  const open = fs.open; let inspected = false;
+  fs.open = async (f, ...args) => {
+    const handle = await open(f, ...args);
+    if (String(f).endsWith('-undo.tmp')) {
+      const write = handle.writeFile.bind(handle);
+      handle.writeFile = async bytes => { await assertPrivate(f, b); inspected = true; return write(bytes); };
+    }
+    return handle;
+  };
+  try { await store.load(); } finally { fs.open = open; }
+  assert.equal(inspected, true); await assertPrivate(file, b);
+  assert.equal(await fs.readFile(file, 'utf8'), 'FAKE PRIVATE ORIGINAL'); assert.equal(await exists(store.pending), false);
 });

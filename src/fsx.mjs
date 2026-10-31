@@ -237,7 +237,7 @@ export async function writeFile(file, bytes, options = {}) {
         ownTemp = inodeIdentity(await handle.stat({bigint: true}));
         await onStage('temp-created', {tempIdentity: ownTemp});
         // Empty until the original target's permissions are in place (also on compensation).
-        await copyPermissions(file, temp);
+        await copyPermissions(file, temp, options);
         await handle.writeFile(bytes);
         if (options.durable) await handle.sync();
       } finally { await handle.close(); }
