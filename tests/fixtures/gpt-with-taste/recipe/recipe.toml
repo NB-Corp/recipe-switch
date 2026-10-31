@@ -1,0 +1,24 @@
+# Minimal loader fixture with vendored Main/Sub texts to exercise long-prompt delivery.
+# Other slots/artifacts are small sentinels; this is not a production prompt package.
+schema_version = 1
+id = "gpt-with-taste"
+name = "GPT with Taste"
+version = "0.1.0"
+description = "Self-contained recipe and committed artifact fixtures."
+
+[prompts]
+system = { file = "sub.md" }
+steering = { file = "sub-steer.md" }
+steering_on_turn = true
+
+[prompts.main]
+system = { file = "main.md" }
+steering = { file = "user-steer.md" }
+steering_on_turn = true
+
+[prompts.main.steering_sources.agent]
+mode = "custom"
+custom = { steering = { file = "agent-steer.md" } }
+
+[prompts.independent]
+system = { file = "independent.md" }

@@ -164,3 +164,23 @@ if sys.argv[2]=='request': ctx.inject(request={'messages':[]},session_id='real')
   const removal = await b.service.previewUndo({harness: 'hermes', all: true}); await b.service.applyUndo(removal.id);
   assert.equal(await exists(reportFile), false); assert.equal(await exists(path.dirname(entry)), false);
 });
+
+test('R34: byte-unchanged forced uninstall retires its carrier and references, preserving late-written bytes as a blob', async t => {
+  const b = await box(t), original = 'ORIGINAL PRIVATE CONFIG\n';
+  await fs.mkdir(path.dirname(b.target), {recursive: true}); await fs.writeFile(b.target, original);
+  const installed = await applyPlan(b.store, await preview(b, 'MANAGED 1', {force: true}));
+  const saved = installed.replacedVersions[0].saved;
+  assert.equal(await exists(saved), true);
+  await fs.writeFile(saved, 'LATER CARRIER VERSION'); await fs.writeFile(b.target, original);
+  const planned = await planUndo(b.store, 'fixture', b.home, {all: true, force: true});
+  assert.deepEqual(planned.files, [], 'uninstall needs a state commit but no target byte write');
+  await applyUndo(b.store, planned);
+  const state = await b.store.load();
+  assert.deepEqual(state.targets, {}); assert.deepEqual(state.replacedVersions, []);
+  assert.equal(await exists(saved), false); assert.equal(await fs.readFile(b.target, 'utf8'), original);
+  const [index] = JSON.parse(await fs.readFile(path.join(installed.backup, 'index.json')));
+  assert.deepEqual(index.replacedVersions, []); assert.deepEqual(index.carrierIdentities, {}); assert.deepEqual(index.carrierHashes, {});
+  assert.equal(index.laterVersions.length, 1);
+  assert.equal(await fs.readFile(path.join(b.store.home, 'blobs', index.laterVersions[0].hash), 'utf8'), 'LATER CARRIER VERSION');
+  assert.equal(await exists(b.store.pending), false);
+});

@@ -124,11 +124,14 @@ export async function privateDirectory(dir, {recursive = true} = {}) {
     }
     const unknown = [];
     const walk = async current => {
-      const stat = await fs.lstat(current, {bigint: true});
-      if (stat.isSymbolicLink() || !stat.isDirectory() && !stat.isFile()) throw new Error(`Linked/nonregular private storage refused: ${current}`);
-      if (!remembered(current, stat)) unknown.push({file: current, directory: stat.isDirectory()});
-      // Never let a cached parent hide a leaf whose ACL changed independently.
-      if (recursive && stat.isDirectory()) for (const entry of await fs.readdir(current)) await walk(path.join(current, entry));
+      try {
+        const stat = await fs.lstat(current, {bigint: true});
+        if (stat.isSymbolicLink() || !stat.isDirectory() && !stat.isFile()) throw new Error(`Linked/nonregular private storage refused: ${current}`);
+        const entries = recursive && stat.isDirectory() ? await fs.readdir(current) : [];
+        if (!remembered(current, stat)) unknown.push({file: current, directory: stat.isDirectory()});
+        // Never let a cached parent hide a leaf whose ACL changed independently.
+        for (const entry of entries) await walk(path.join(current, entry));
+      } catch (error) { if (error.code !== 'ENOENT') throw error; } // A concurrent cleanup may remove an entry during the walk.
     };
     await walk(dir);
     let acls;

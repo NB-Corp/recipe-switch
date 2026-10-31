@@ -1,0 +1,22 @@
+# Minimal second-recipe fixture for cross-recipe switching, not production prompts.
+schema_version = 1
+id = "deepseek-v4-intent-and-depth"
+name = "DeepSeek — Switch fixture"
+version = "1.0.0"
+
+[prompts]
+system = { file = "deepseek-sub.md" }
+steering = { file = "deepseek-sub-steer.md" }
+steering_on_turn = true
+
+[prompts.main]
+system = { file = "deepseek-main.md" }
+steering = { file = "deepseek-user-steer.md" }
+steering_on_turn = true
+
+[prompts.main.steering_sources.agent]
+mode = "custom"
+custom = { steering = { file = "deepseek-agent-steer.md" } }
+
+[prompts.independent]
+system = { file = "deepseek-independent.md" }

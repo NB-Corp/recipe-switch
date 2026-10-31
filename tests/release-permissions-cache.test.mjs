@@ -106,3 +106,26 @@ test('R31/O01: installing and uninstalling an unresolved SID target also privati
   await applyUndo(store, await planUndo(store, 'fixture', home, {all: true}));
   assert.deepEqual(await fs.readFile(file), before); assert.equal(await readAcl(file), expected);
 });
+
+test('private storage: recursive walks skip entries removed before lstat or readdir, but propagate other errors', async t => {
+  const b = await sandbox(t, {sources: []});
+  for (const operation of ['lstat', 'readdir']) {
+    const root = b.file(`vanished-${operation}`), victim = path.join(root, 'gone');
+    await privateDirectory(root);
+    if (operation === 'lstat') await fs.writeFile(victim, ''); else await fs.mkdir(victim);
+    const original = fs[operation]; let injected = false;
+    fs[operation] = async (file, ...args) => {
+      if (file === victim && !injected) { injected = true; await fs.rm(victim, {recursive: true}); }
+      return original(file, ...args);
+    };
+    try { await privateDirectory(root); } finally { fs[operation] = original; }
+    assert.ok(injected, `${operation} deletion occurred during the walk`);
+    await fs.writeFile(victim, 'still audited');
+    const fsLstat = fs.lstat;
+    fs.lstat = async (file, ...args) => {
+      if (file === victim) throw Object.assign(new Error('synthetic permission failure'), {code: 'EACCES'});
+      return fsLstat(file, ...args);
+    };
+    try { await assert.rejects(privateDirectory(root), /synthetic permission failure/); } finally { fs.lstat = fsLstat; }
+  }
+});

@@ -8,8 +8,8 @@ import {Service} from '../src/service.mjs';
 import {format} from '../src/i18n.mjs';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export const GWT = process.env.RECIPE_SWITCH_GWT || path.resolve(ROOT, '..', 'gpt-with-taste');
-export const KIKI_RECIPES = path.resolve(ROOT, '..', 'kimi', 'recipes');
+export const GWT = process.env.RECIPE_SWITCH_GWT || path.join(ROOT, 'tests', 'fixtures', 'gpt-with-taste');
+export const KIKI_RECIPES = path.join(ROOT, 'tests', 'fixtures', 'kimi');
 
 export async function sandbox(t, {sources, base = process.env.RECIPE_SWITCH_TEST_ROOT || path.join(ROOT, '.tmp', 'test')} = {}) {
   await fs.mkdir(base, {recursive: true});

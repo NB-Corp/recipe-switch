@@ -202,7 +202,7 @@ export class Store {
     }
     if (committed) await publishOriginals(this, journal.originals);
     await retainedIndex(this, journal);
-    if (committed) await retireCarriers(this, journal.files.map(row => row.path), journal.backup);
+    if (committed) await retireCarriers(this, journal.retirePaths ?? journal.files.map(row => row.path), journal.backup);
     else await retireCarriers(this, journal.files.map(row => row.path), null, {onlyBackup: journal.backup});
     for (const dir of committed ? journal.cleanupDirs ?? [] : [...journal.missingDirs].reverse()) await rmdirIfEmpty(dir);
     await collectOrphanBlobs(this);
@@ -407,11 +407,12 @@ async function commitFiles(store, rows, state, backupDir, beforeSave, cleanupDir
   const dirs = await missingDirs(rows), created = [], id = crypto.randomUUID();
   const files = rows.filter(row => !equalBytes(row.before, row.after)).map((row, i) => ({path: row.path, boundary: row.boundary,
     before: enc(row.before), after: enc(row.after), ...transactionPaths(row.path, id, i, backupDir)}));
-  releaseCarrierReferences(state, files.map(row => row.path));
+  const retirePaths = rows.map(row => row.path); // R34: a committed undo retires carriers even when bytes already match.
+  releaseCarrierReferences(state, retirePaths);
   const replacedVersions = files.filter(row => row.before !== null).map(row => ({path: toPosix(row.path), saved: toPosix(row.archive), hash: sha256(dec(row.before))}));
   if (replacedVersions.length) (state.replacedVersions ??= []).push({backup: backupDir, files: replacedVersions});
   const journal = {id, backup: backupDir, backupBoundary: await captureBoundary(backupDir), stateAfter: enc(stateBytes(state)), missingDirs: dirs,
-    cleanupDirs: [...new Set(cleanupDirs)].sort((a, b) => b.length - a.length), files, originals};
+    cleanupDirs: [...new Set(cleanupDirs)].sort((a, b) => b.length - a.length), files, originals, retirePaths};
   await store.journal(journal);
   try {
     for (const row of files) {
