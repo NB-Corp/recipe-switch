@@ -7,7 +7,7 @@ h1: Safety, Backups & Rollback
 kicker: Reference
 ---
 
-`recipe-switch` edits configuration files inside your daily coding tools (`~/.codex`, `~/.claude`, `~/.kiki`, `~/.pi`, `~/.dsh`, `~/.kimi-code`, etc.). It is engineered so that **no write is a surprise, no manual edit is silently lost, and every change can be undone byte-for-byte.**
+`recipe-switch` edits configuration files inside your daily coding tools (`~/.codex`, `~/.claude`, `~/.kiki`, `~/.pi`, `~/.dsh`, `~/.kimi-code`, etc.). It previews writes, backs up exact bytes, and blocks on detected manual edits unless you confirm an override. Rollback restores owned source spans; original snapshots restore complete saved files. The transaction section below explains the recovery race and old-handle retention cutoff.
 
 ## 1. Dry-Run Diff Preview Before Every Write
 
@@ -61,11 +61,11 @@ Before mutating any target file:
 1. A file lock serializes operations across concurrent CLI invocations and UI requests.
 2. Canonical path checks (`assertBoundary`) verify that no symlink or Windows junction redirects any target file outside the harness home directory.
 3. Exact pre-write bytes are stored as durable blobs, `backups/<op-id>/index.json` records their references, and `pending.json` is flushed to disk.
-4. **Displaced old files are kept only until the next operation.** When replacing an existing file on the same disk volume, the displaced old file is moved into the operation's `backups/<op-id>/` directory. Each harness keeps **at most the most recent displaced version**: on the following operation, a displaced file whose content already entered the backup store is deleted outright, while one whose content differs (someone wrote to it afterwards) is saved into the new operation's backup before deletion. If the state directory and the target live on different volumes, the old file is kept next to the target file, its path is recorded in the backup metadata and printed in the operation result, and `uninstall` will not delete it automatically so you can clean it up yourself.
-5. If an error or crash interrupts a multi-file write before `state.json` commits, the very next command automatically runs `store.recover()`, reverting any partially written files back to their pre-operation bytes. (If you edited a file after the crash, recovery preserves your manual edit and reports the backup path for a manual decision.)
+4. **Each affected file path retains at most its latest displaced version.** On the same volume, the old inode moves to `backups/<op-id>/`; across volumes, it remains beside the target and its path appears in the backup metadata and result. Both follow the same retirement rules: the next related committed operation (including `uninstall`) reads and retires the prior carrier, first saving changed bytes as a later-version blob. The cutoff is **that one read when the tool's next operation retires the old version**, not the end of the operation. Writes through an old open handle after that read are not guaranteed to survive. Uninstall can itself create a new latest carrier.
+5. If an error or crash interrupts a multi-file write before `state.json` commits, the next operation that loads state runs `store.recover()` to restore pre-operation bytes. If recovery cannot finish, `pending.json` stays in place and CLI/API/UI report the current and expected content fingerprints, backup location and recovery steps. Preserve the current file before restoring from backup or retrying with hard-link support restored.
 
 <div class="note warn" markdown="1">
-**Limit:** a displaced version survives only until that harness's next operation. Content written afterwards through an old, still-open file handle is not guaranteed to be preserved.
+**Known recovery race:** when hard links are unavailable and recovery falls back to rename, a target externally recreated between the “target absent” check and `rename` will be overwritten. This check and rename are not atomic; stop other writers before recovery. Ordinary drift blocking does not cover this interval.
 </div>
 
 ## 6. Rollback vs. Uninstall vs. Original State Backup
@@ -84,7 +84,8 @@ Before mutating any target file:
 - **A cycle ends** when the harness is fully uninstalled or restored to its pre-install state. The snapshot retires with it, and any backup blobs no longer referenced by anything are released immediately. The next installation starts a new cycle with a fresh snapshot.
 - **Upgrades backfill automatically.** Installations upgraded from an older `recipe-switch` version automatically reconstruct the snapshot from existing records. Where the complete original bytes can no longer be recovered, the snapshot is marked as a **reconstructed version (重建版本)** and restoring it requires an extra confirmation.
 - **Already at the pre-install state?** The restore button is disabled — there is nothing to go back to.
-- **Only your user can read the backup directory.** On Windows, `recipe-switch` tightens the ACL with `icacls`; on POSIX systems it enforces `0700` on directories and `0600` on files.
+- **Private storage before payload.** The state root, state/pending journals, blobs, operation backups, probe records and temporary files are secured before writing. Windows uses `icacls` to remove inheritance and other accounts' explicit grants, including pre-existing Everyone/Users grants; existing SYSTEM and Administrators grants may remain for maintenance and recovery. POSIX directories use `0700` and files `0600`, including existing files. Failure stops writing. Empty replacement targets receive the original DACL (Windows) or owner/group and mode (POSIX) before payload, so replacing a private config cannot expose an unchanged API key. Recovery without a permission source uses private permissions instead of wider parent inheritance.
+- **Harness authorization is separate.** Models, providers, credentials and authorization settings are not changed. The OpenClaw conversation-access key is an explicit UI opt-in, restored on uninstall; an existing `false` is never overridden, even by `--force`.
 - **Tiny footprint.** Only existing files that will be modified in place get a content snapshot (files that did not exist are recorded as "originally absent"), and identical content is stored once by SHA-256 — never duplicated.
 
 ![Original backup and dated restore action]({{ '/screenshots/ui-en-16-originals.png' | relative_url }})

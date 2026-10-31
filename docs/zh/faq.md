@@ -50,11 +50,13 @@ Kimi Code CLI 从 `~/.kimi-code/SYSTEM.md` 读取系统提示词，并从 `~/.ki
    node bin/recipe-switch.mjs originals <harness>
    node bin/recipe-switch.mjs restore-original <harness> --yes
    ```
-   （对应 Web 面板中的**"原始备份 / 恢复到装之前"**，无论中间切换过多少次或做过强制覆盖，都能直接恢复到当前安装周期开始时的初始快照。）
+   （对应 Web 面板中的**"原始备份 / 恢复到装之前"**，恢复当前安装周期开始时保存的完整文件字节。）
+
+恢复前请停止其他写入者：如果硬链接不可用而恢复回退到 rename，在“检查目标不存在”和“rename”之间被外部重新创建的目标会被覆盖。这是已知恢复竞态。如果恢复仍受阻，请保留当前文件，按 `status` 显示的备份位置和步骤处理。
 
 ### 什么情况下 `recipe-switch` 会直接拒绝安装？
 
-有两种情况会在写入任何东西之前就停下：
+常见的阻断原因有：
 - **文件系统不支持硬链接。** 预览阶段会探测目标目录，FAT/exFAT 分区和部分网络盘会探测失败，操作被阻断并说明"无法保证安全写入"。请把工具目录挪到 NTFS/APFS/ext4 之类的文件系统再试。
 - **你显式拒绝过某项权限。** 对 OpenClaw 而言，`openclaw.json` 里已有的 `allowConversationAccess: false`、`allowPromptInjection: false`、`plugins.enabled: false` 或 `plugins.deny` 条目会被直接尊重——即便传 `--force` 也绝不覆盖。
 
@@ -62,7 +64,7 @@ Kimi Code CLI 从 `~/.kimi-code/SYSTEM.md` 读取系统提示词，并从 `~/.ki
 
 **占用空间很小：只存被改动文件的原样一份，相同内容去重。**
 - **原始备份按"安装周期"计**：每次从未安装状态装上时拍一份快照，周期内不覆盖。完全卸载或"恢复到装之前"后周期结束，快照退役，不再被引用的备份内容立即释放。只有会被原地修改的已有文件才存快照，内容按 SHA-256 去重。
-- **被替换下来的旧版本只保留到下一次操作**：每个工具最多保留最近一次被替换下来的旧版本。到下一次操作时，内容已经进入备份库的直接删除；内容有变化的（说明之后有人写过）先存进新备份再删。跨卷时旧文件留在原文件旁边，卸载不会自动删除，由你自己清理。注意限制：在那次操作之后仍通过旧的、保持打开的文件句柄写入的内容不保证保存。
+- **每个受影响文件路径最多保留最近一次被替换的旧版本**：同卷载体放在操作备份中，跨卷载体留在目标旁边，二者遵循同一套退休规则，包括 `uninstall`。下一次相关操作提交后读取并退休旧载体，字节有变化时先存成“后来写入的版本”blob。截止点是**该工具下一次操作退休旧版本时的那一次读取**，不是整次操作结束；此后通过旧打开句柄写入的内容不保证保存。卸载本身也可能留下一份新的最近载体。
 
 ### 装上配方后，我又手动改了提示词或配置文件，会发生什么？
 
@@ -72,11 +74,11 @@ Kimi Code CLI 从 `~/.kimi-code/SYSTEM.md` 读取系统提示词，并从 `~/.ki
 
 ### `recipe-switch` 会改我的模型、API Key、Provider 或 MCP 配置吗？
 
-**绝不会。** `recipe-switch` 只写提示词文件和挂载它们所需的最小配置项，绝不触碰模型选择、provider 地址、登录凭据、MCP 服务或角色定义。而且在 CLI 和 UI 展示 diff 预览时，配置文件中相邻行里形如 `Authorization`、`api_key`、`token`、`password`、`cookie`、`Bearer` 的值都会自动做 `[redacted]` 脱敏显示。
+**绝不会。** `recipe-switch` 只写提示词文件和挂载它们所需的最小配置项，不改模型选择、provider 地址、登录凭据、MCP 服务或角色定义。它会读取并备份受影响的完整配置文件，因此未改动的凭据可能包含在私有备份里。而且在 CLI 和 UI 展示 diff 预览时，配置文件中相邻行里形如 `Authorization`、`api_key`、`token`、`password`、`cookie`、`Bearer` 的值都会自动做 `[redacted]` 脱敏显示。
 
 ### 备份目录别人能读到吗？
 
-不能。状态与备份目录（`~/.recipe-switch`）只有当前用户可读：Windows 下用 `icacls` 收紧权限；POSIX 系统下目录强制 `0700`、文件强制 `0600`。
+写入正文前，状态根目录、state/pending 日志、blobs、操作备份、probe 记录和临时文件都会收紧权限，包括已有文件。Windows 用 `icacls` 去继承、清除非当前用户的显式授权（包括 Everyone/Users），但可保留已有 SYSTEM/Administrators 授权供维护与恢复；POSIX 目录用 `0700`、文件用 `0600`。失败就拒绝写入。替换已有目标时，先给空 temp 复制原 DACL 或 POSIX 属主/组与 mode，再写正文；恢复时权限来源缺失则使用私有权限。
 
 ### 为什么 OpenClaw 里有一个"授予 recipe-switch 插件对话访问权限"开关？
 

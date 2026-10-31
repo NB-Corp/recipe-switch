@@ -45,11 +45,11 @@ You have three options depending on how far back you want to go:
   node bin/recipe-switch.mjs originals <harness>
   node bin/recipe-switch.mjs restore-original <harness> --yes
   ```
-In the local web UI (`recipe-switch ui`), open the tool card and click **Undo last change**, **Restore**, or **原始备份 / 恢复到装之前**.
+In the local web UI (`recipe-switch ui`), open the tool card and click **Undo last change**, **Restore**, or **原始备份 / 恢复到装之前**. Stop other writers before recovery: if hard links are unavailable and recovery falls back to rename, a target externally recreated between the absence check and rename will be overwritten. This is a known recovery race; if recovery stays pending, preserve the current file and follow the backup/recovery steps shown by `status`.
 
 ### When does `recipe-switch` refuse to install at all?
 
-Two situations stop an install before anything is written:
+Common blockers include:
 - **The file system cannot do hard links.** The preview stage probes the target directory; FAT/exFAT volumes and some network drives fail the probe, and the operation blocks with a notice that safe writes cannot be guaranteed there. Move the harness home to NTFS/APFS/ext4.
 - **You explicitly denied a permission.** For OpenClaw, an existing `allowConversationAccess: false`, `allowPromptInjection: false`, `plugins.enabled: false`, or a `plugins.deny` entry is never overridden — even with `--force`.
 
@@ -57,7 +57,7 @@ Two situations stop an install before anything is written:
 
 **Storage overhead is tiny: `recipe-switch` only stores one copy of the original files it modifies, deduplicated by content.**
 - **Original backups are counted per install cycle**: one snapshot is taken when a harness goes from not-installed to installed, and it is not overwritten for the rest of that cycle. Uninstall (or restore to the pre-install state) ends the cycle, retires the snapshot, and immediately releases any backup blobs nothing references anymore. Only existing files that will be modified in place are snapshotted; identical content is stored once by SHA-256.
-- **Displaced old files are kept only until the next operation.** Each harness keeps at most the most recent displaced version. On the next operation, a displaced file already in the backup store is deleted outright; one whose content changed since (someone wrote to it afterwards) is saved into the new backup first. On a cross-volume setup the old file stays next to the target and `uninstall` leaves it for you to clean up. Note the limit: after that next operation, content written through an old still-open file handle is not guaranteed to survive.
+- **Each affected file path retains at most its latest displaced version.** Same-volume carriers live in the operation backup; cross-volume carriers stay beside the target. Both follow the same retirement rules, including `uninstall`: the next related committed operation reads and retires the prior carrier, first saving changed bytes as a later-version blob. The cutoff is **that one read when the tool's next operation retires the old version**, not the end of the operation. Later writes through an old open handle are not guaranteed to survive. Uninstall can itself leave a new latest carrier.
 
 ### What happens if I edit a prompt or config file by hand after installing a recipe?
 
@@ -67,11 +67,11 @@ Any subsequent `switch`, `rollback`, or `uninstall` will **stop and block** rath
 
 ### Does `recipe-switch` touch my API keys, model choices, providers, or MCP servers?
 
-**No.** `recipe-switch` only writes behavior prompt files and the minimal config keys needed to load them. It never reads or modifies your model selection, API keys, provider URLs, MCP servers, or agent role definitions. Furthermore, when displaying unified diffs in the CLI or UI, any adjacent lines in your config files that look like secrets (`api_key`, `token`, `password`, `Authorization`, `Bearer`) are automatically redacted.
+**No.** `recipe-switch` only writes behavior prompt files and the minimal config keys needed to load them. It does not change your model selection, API keys, provider URLs, MCP servers, or agent role definitions. It reads and backs up complete affected config files, so unchanged credentials may be present in private backups. Furthermore, when displaying unified diffs in the CLI or UI, any adjacent lines in your config files that look like secrets (`api_key`, `token`, `password`, `Authorization`, `Bearer`) are automatically redacted.
 
 ### Who can read the backup directory?
 
-Only you. The state and backup directory (`~/.recipe-switch`) is locked to the current user: on Windows `recipe-switch` tightens the ACL with `icacls`, and on POSIX systems it enforces `0700` on directories and `0600` on files.
+Before payload, the state root, state/pending journals, blobs, operation backups, probe records and temporary files are secured, including existing files. Windows uses `icacls` to remove inheritance and other accounts' explicit grants (including Everyone/Users), while retaining existing SYSTEM/Administrators grants for maintenance and recovery. POSIX uses `0700` directories and `0600` files. Failure stops writing. Existing target DACLs or POSIX owner/group and mode are copied to empty temp files before payload; recovery without a permission source uses private permissions.
 
 ### Why does OpenClaw ask for "Grant recipe-switch conversation access"?
 

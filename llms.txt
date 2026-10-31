@@ -1,6 +1,6 @@
 # recipe-switch
 
-> Switch how your AI coding tools think and work. `recipe-switch` is a zero-dependency Node.js (≥ 22) CLI and localhost web panel (`127.0.0.1`) that installs, switches, customizes, and rolls back behavior recipes — Main, Subagent, and Independent system prompts plus User, Subagent, and Result per-turn steering reminders — across 11 AI coding harnesses, with unified diff previews, automatic backups, hand-edit drift protection, and byte-exact rollback.
+> Switch how your AI coding tools think and work. `recipe-switch` is a zero-dependency Node.js (≥ 22) CLI and localhost web panel (`127.0.0.1`) that installs, switches, customizes, and rolls back behavior recipes — Main, Subagent, and Independent system prompts plus User, Subagent, and Result per-turn steering reminders — across 11 AI coding harnesses, with unified diff previews, automatic backups, hand-edit drift protection, and saved file bytes/source spans for rollback (see recovery limits below).
 
 - Repository: https://github.com/NB-Corp/recipe-switch
 - Default Recipe Source: https://github.com/NB-Corp/gpt-with-taste
@@ -19,6 +19,13 @@ A behavior recipe (`recipe.toml` or an author repo like `gpt-with-taste`) define
 - `agentSteer`: Per-turn reminder injected when a subagent or task returns results.
 
 Recipes can also declare boolean checkbox options (`[options.<id>]`) that customize prompts via `when`/`unless` item filtering, whole-slot `prepend`/`append`, or Markdown section-level `[[options.<id>.patch]]` (`prepend`, `append`, `before`, `after`, `replace`, `remove`).
+
+## Safety Notes Worth Surfacing
+
+- **Recovery race**: if hard links become unavailable and recovery falls back to rename, a target externally recreated between the absence check and rename will be overwritten. Stop other writers before recovery. Pending recovery reports current/expected fingerprints, backup location and recovery steps in CLI/API/UI.
+- **Displaced versions**: each affected file path keeps at most its latest carrier. Same-volume carriers in backups and cross-volume carriers beside targets follow the same retirement rules, including uninstall. The cutoff is that one read when the tool's next operation retires the old version; later old-handle writes are not guaranteed to survive. Changed bytes become a later-version blob before deletion. Uninstall may create a new latest carrier.
+- **Private storage and target permissions**: state, pending journals, blobs, operation backups, probe records and temp files are secured before payload, including existing files and explicit Everyone/Users grants. Windows removes non-user grants but may retain existing SYSTEM/Administrators grants; POSIX uses 0700 directories and 0600 files. Existing target DACLs or POSIX owner/group and mode are copied to empty temp files before payload; recovery without a permission source uses private permissions. Failure stops writing.
+- **Authorization**: models, providers and credentials are not changed. OpenClaw conversation access requires explicit UI opt-in and is restored on uninstall; existing false/deny settings are never overridden, even with --force.
 
 ## Supported AI Coding Harnesses (11)
 
